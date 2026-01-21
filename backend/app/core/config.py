@@ -2,7 +2,7 @@
 Application configuration using Pydantic Settings.
 Loads environment variables and provides typed configuration.
 
-Configuration is loaded from environment variables and .env file.
+Configuration is loaded from environment variables and .env file on startup.
 """
 
 from functools import lru_cache
