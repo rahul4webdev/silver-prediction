@@ -219,16 +219,5 @@ export async function triggerPrediction(
   return response.prediction || null;
 }
 
-// Accuracy trend wrapper
-export async function getAccuracyTrend(
-  asset: string = 'silver',
-  periodDays: number = 30
-): Promise<{ date: string; accuracy: number }[]> {
-  const response = await api.get('/accuracy/trend', {
-    params: { asset, period_days: periodDays, bucket_days: 1 },
-  });
-  return response.data.trend || [];
-}
-
 // Export default for easy importing
 export default api;

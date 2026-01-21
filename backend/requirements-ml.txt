@@ -1,0 +1,9 @@
+# Heavy ML dependencies - install on production server
+# Run: pip install -r requirements-ml.txt
+
+# Prophet for time series forecasting
+prophet>=1.1.5,<1.2.0
+
+# PyTorch for LSTM models (CPU version for server)
+--index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0,<2.3.0
