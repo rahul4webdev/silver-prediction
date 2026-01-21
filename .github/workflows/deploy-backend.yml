@@ -110,6 +110,12 @@ jobs:
 
             echo "=== Starting Backend Deployment ==="
 
+            # Add common paths to PATH
+            export PATH="$PATH:/usr/local/bin:/usr/bin"
+
+            # Check python availability
+            echo "Python version: $(python3.11 --version 2>/dev/null || python3 --version 2>/dev/null || echo 'not found')"
+
             # Paths
             BACKEND_PATH="/home/predictionapi.gahfaudio.in/public_html"
             DATA_PATH="/home/predictionapi.gahfaudio.in/data"
@@ -120,7 +126,7 @@ jobs:
             if [ ! -d "$BACKEND_PATH/.git" ]; then
               echo "Git repository not found, cloning..."
               # Remove existing files if any
-              rm -rf $BACKEND_PATH/*
+              rm -rf $BACKEND_PATH/* 2>/dev/null || true
               rm -rf $BACKEND_PATH/.[!.]* 2>/dev/null || true
               # Clone the repository
               git clone $REPO_URL $BACKEND_PATH
@@ -140,14 +146,14 @@ jobs:
             mkdir -p $DATA_PATH/processed
             mkdir -p $LOGS_PATH
 
-            # Set ownership
-            chown -R predictionapi.gahfaudio.in:predictionapi.gahfaudio.in $DATA_PATH || true
-            chown -R predictionapi.gahfaudio.in:predictionapi.gahfaudio.in $LOGS_PATH || true
+            # Set ownership (ignore errors if not root)
+            chown -R predictionapi.gahfaudio.in:predictionapi.gahfaudio.in $DATA_PATH 2>/dev/null || true
+            chown -R predictionapi.gahfaudio.in:predictionapi.gahfaudio.in $LOGS_PATH 2>/dev/null || true
 
             # Create virtual environment if not exists
             if [ ! -d "venv" ]; then
               echo "Creating virtual environment..."
-              python3.11 -m venv venv
+              python3.11 -m venv venv || python3 -m venv venv
             fi
 
             # Activate virtual environment and install dependencies
@@ -158,45 +164,54 @@ jobs:
 
             # Create .env file
             echo "Creating .env file..."
-            echo "ENVIRONMENT=production" > .env
-            echo "DEBUG=false" >> .env
-            echo "SECRET_KEY=${SECRET_KEY}" >> .env
-            echo "UPSTOX_API_KEY=${UPSTOX_API_KEY}" >> .env
-            echo "UPSTOX_API_SECRET=${UPSTOX_API_SECRET}" >> .env
-            echo "UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback" >> .env
-            echo "UPSTOX_ACCESS_TOKEN=${UPSTOX_ACCESS_TOKEN}" >> .env
-            echo "POSTGRES_HOST=${POSTGRES_HOST}" >> .env
-            echo "POSTGRES_PORT=${POSTGRES_PORT}" >> .env
-            echo "POSTGRES_DB=${POSTGRES_DB}" >> .env
-            echo "POSTGRES_USER=${POSTGRES_USER}" >> .env
-            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" >> .env
-            echo "REDIS_HOST=${REDIS_HOST}" >> .env
-            echo "REDIS_PORT=${REDIS_PORT}" >> .env
-            echo "CELERY_BROKER_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0" >> .env
-            echo "CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:${REDIS_PORT}/0" >> .env
-            echo "API_HOST=127.0.0.1" >> .env
-            echo "API_PORT=8023" >> .env
-            echo "API_DOMAIN=predictionapi.gahfaudio.in" >> .env
-            echo "FRONTEND_URL=https://prediction.gahfaudio.in" >> .env
-            echo "DASHBOARD_DOMAIN=prediction.gahfaudio.in" >> .env
-            echo "MODEL_WEIGHTS_PATH=/home/predictionapi.gahfaudio.in/data/models" >> .env
+            cat > .env << ENVEOF
+            ENVIRONMENT=production
+            DEBUG=false
+            SECRET_KEY=${SECRET_KEY}
+            UPSTOX_API_KEY=${UPSTOX_API_KEY}
+            UPSTOX_API_SECRET=${UPSTOX_API_SECRET}
+            UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback
+            UPSTOX_ACCESS_TOKEN=${UPSTOX_ACCESS_TOKEN}
+            POSTGRES_HOST=${POSTGRES_HOST}
+            POSTGRES_PORT=${POSTGRES_PORT}
+            POSTGRES_DB=${POSTGRES_DB}
+            POSTGRES_USER=${POSTGRES_USER}
+            POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            REDIS_HOST=${REDIS_HOST}
+            REDIS_PORT=${REDIS_PORT}
+            CELERY_BROKER_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+            CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:${REDIS_PORT}/0
+            API_HOST=127.0.0.1
+            API_PORT=8023
+            API_DOMAIN=predictionapi.gahfaudio.in
+            FRONTEND_URL=https://prediction.gahfaudio.in
+            DASHBOARD_DOMAIN=prediction.gahfaudio.in
+            MODEL_WEIGHTS_PATH=/home/predictionapi.gahfaudio.in/data/models
+            ENVEOF
 
-            # Copy supervisor configs
+            # Remove leading whitespace from .env
+            sed -i 's/^[[:space:]]*//' .env
+
+            # Copy supervisor configs if directory exists
             echo "Setting up supervisor configs..."
-            cp deploy/supervisor/*.conf /etc/supervisord.d/ 2>/dev/null || true
+            if [ -d "/etc/supervisord.d" ]; then
+              cp deploy/supervisor/*.conf /etc/supervisord.d/ 2>/dev/null || true
+            fi
 
             # Reload and restart services
             echo "Restarting services..."
-            supervisorctl reread || true
-            supervisorctl update || true
-            supervisorctl restart silver-prediction-api 2>/dev/null || supervisorctl start silver-prediction-api || true
-            supervisorctl restart silver-prediction-worker 2>/dev/null || supervisorctl start silver-prediction-worker || true
-            supervisorctl restart silver-prediction-scheduler 2>/dev/null || supervisorctl start silver-prediction-scheduler || true
-
-            # Wait and check status
-            sleep 5
-            echo "=== Service Status ==="
-            supervisorctl status | grep silver || echo "Checking services..."
+            if command -v supervisorctl &> /dev/null; then
+              supervisorctl reread || true
+              supervisorctl update || true
+              supervisorctl restart silver-prediction-api 2>/dev/null || supervisorctl start silver-prediction-api 2>/dev/null || true
+              supervisorctl restart silver-prediction-worker 2>/dev/null || supervisorctl start silver-prediction-worker 2>/dev/null || true
+              supervisorctl restart silver-prediction-scheduler 2>/dev/null || supervisorctl start silver-prediction-scheduler 2>/dev/null || true
+              sleep 5
+              echo "=== Service Status ==="
+              supervisorctl status | grep silver || echo "No silver services found"
+            else
+              echo "supervisorctl not found, skipping service restart"
+            fi
 
             echo "=== Backend Deployment Complete ==="
 

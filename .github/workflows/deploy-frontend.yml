@@ -63,6 +63,17 @@ jobs:
 
             echo "=== Starting Frontend Deployment ==="
 
+            # Add common paths to PATH
+            export PATH="$PATH:/usr/local/bin:/usr/bin:/root/.nvm/versions/node/v20/bin:$HOME/.nvm/versions/node/v20/bin"
+
+            # Source nvm if available
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            # Check node/npm availability
+            echo "Node version: $(node --version || echo 'not found')"
+            echo "NPM version: $(npm --version || echo 'not found')"
+
             # Frontend path on CyberPanel
             FRONTEND_PATH="/home/prediction.gahfaudio.in/public_html"
             REPO_URL="https://github.com/rahul4webdev/silver-prediction.git"
@@ -71,7 +82,7 @@ jobs:
             if [ ! -d "$FRONTEND_PATH/.git" ]; then
               echo "Git repository not found, cloning..."
               # Remove existing files if any
-              rm -rf $FRONTEND_PATH/*
+              rm -rf $FRONTEND_PATH/* 2>/dev/null || true
               rm -rf $FRONTEND_PATH/.[!.]* 2>/dev/null || true
               # Clone the repository
               git clone $REPO_URL $FRONTEND_PATH
@@ -104,10 +115,11 @@ jobs:
 
             # Restart PM2 process (run on port 8024)
             echo "Restarting PM2..."
-            pm2 restart silver-prediction-frontend 2>/dev/null || pm2 start npm --name "silver-prediction-frontend" -- start -- -p 8024
+            pm2 delete silver-prediction-frontend 2>/dev/null || true
+            pm2 start npm --name "silver-prediction-frontend" -- start -- -p 8024
 
             # Save PM2 configuration
-            pm2 save
+            pm2 save --force
 
             # Verify process is running
             sleep 3
