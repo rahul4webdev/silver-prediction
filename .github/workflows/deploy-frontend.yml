@@ -1,0 +1,120 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  build:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run linting
+        run: |
+          cd frontend
+          npm run lint || true
+
+      - name: Build application
+        env:
+          NEXT_PUBLIC_API_URL: https://predictionapi.gahfaudio.in
+          NEXT_PUBLIC_WS_URL: wss://predictionapi.gahfaudio.in
+        run: |
+          cd frontend
+          npm run build
+
+  deploy:
+    name: Deploy to Server
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy to CyberPanel Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_SSH_PORT }}
+          script: |
+            set -e
+
+            echo "=== Starting Frontend Deployment ==="
+
+            # Frontend path on CyberPanel
+            FRONTEND_PATH="/home/prediction.gahfaudio.in/public_html"
+
+            # Navigate to project directory
+            cd $FRONTEND_PATH
+
+            # Pull latest changes
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Navigate to frontend folder
+            cd frontend
+
+            # Install dependencies
+            echo "Installing dependencies..."
+            npm ci
+
+            # Create .env.local (without leading spaces)
+            echo "Creating .env.local..."
+            cat > .env.local << 'ENVEOF'
+NEXT_PUBLIC_API_URL=https://predictionapi.gahfaudio.in
+NEXT_PUBLIC_WS_URL=wss://predictionapi.gahfaudio.in
+NEXT_PUBLIC_APP_NAME=Silver Prediction
+ENVEOF
+
+            # Build the application
+            echo "Building frontend..."
+            npm run build
+
+            # Restart PM2 process (run on port 8024)
+            echo "Restarting PM2..."
+            pm2 restart silver-prediction-frontend 2>/dev/null || pm2 start npm --name "silver-prediction-frontend" -- start -- -p 8024
+
+            # Save PM2 configuration
+            pm2 save
+
+            # Verify process is running
+            sleep 3
+            echo "=== PM2 Status ==="
+            pm2 status silver-prediction-frontend
+
+            echo "=== Frontend Deployment Complete ==="
+
+  notify:
+    name: Notify on Failure
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    if: failure()
+
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "Frontend deployment failed! Check the workflow logs."

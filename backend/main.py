@@ -1,0 +1,244 @@
+"""
+Silver Price Prediction System - Main FastAPI Application
+"""
+
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.v1 import router as api_router
+from app.core.config import settings
+from app.models.database import init_db, close_db, create_hypertables
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if settings.debug else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator:
+    """
+    Application lifespan handler.
+    Initializes database and other services on startup.
+    """
+    logger.info("Starting Silver Price Prediction System...")
+
+    # Initialize database
+    try:
+        await init_db()
+        logger.info("Database initialized")
+
+        # Create TimescaleDB hypertables
+        await create_hypertables()
+        logger.info("Hypertables created")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+
+    yield
+
+    # Cleanup on shutdown
+    logger.info("Shutting down...")
+    await close_db()
+
+
+# Create FastAPI application
+app = FastAPI(
+    title="Silver Price Prediction API",
+    description="""
+    Real-time silver price prediction system using ensemble ML models.
+
+    ## Features
+    - Real-time price predictions for MCX and COMEX silver
+    - Multiple prediction intervals (30m, 1h, 4h, daily)
+    - Ensemble model combining Prophet, LSTM, and XGBoost
+    - Probability-based forecasts with confidence intervals
+    - Prediction tracking and accuracy metrics
+    """,
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        settings.frontend_url,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API routes
+app.include_router(api_router)
+
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "name": "Silver Price Prediction API",
+        "version": "1.0.0",
+        "status": "running",
+        "environment": settings.environment,
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "health": "/api/v1/health",
+    }
+
+
+# Error handlers
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc) if settings.debug else "An unexpected error occurred",
+        },
+    )
+
+
+# WebSocket endpoint for real-time updates
+from fastapi import WebSocket, WebSocketDisconnect
+import json
+import asyncio
+
+
+class ConnectionManager:
+    """Manages WebSocket connections."""
+
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+        logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients."""
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/prices/{asset}")
+async def websocket_prices(websocket: WebSocket, asset: str):
+    """
+    WebSocket endpoint for real-time price updates.
+
+    Clients can subscribe to receive:
+    - Real-time price updates
+    - New predictions
+    - Verification results
+    """
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            # Receive messages from client
+            data = await websocket.receive_text()
+
+            try:
+                message = json.loads(data)
+                action = message.get("action")
+
+                if action == "subscribe":
+                    await websocket.send_json({
+                        "type": "subscribed",
+                        "asset": asset,
+                        "message": f"Subscribed to {asset} updates",
+                    })
+
+                elif action == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid JSON",
+                })
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+@app.websocket("/ws/predictions")
+async def websocket_predictions(websocket: WebSocket):
+    """
+    WebSocket endpoint for prediction updates.
+    """
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            try:
+                message = json.loads(data)
+
+                if message.get("action") == "get_latest":
+                    # Return latest prediction
+                    from app.models.database import get_db_context
+                    from app.services.prediction_engine import prediction_engine
+
+                    async with get_db_context() as db:
+                        # This would return the latest prediction
+                        pass
+
+            except json.JSONDecodeError:
+                pass
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# Background task to broadcast updates
+async def broadcast_predictions():
+    """
+    Background task that broadcasts new predictions to connected clients.
+    """
+    while True:
+        # Check for new predictions every 30 seconds
+        await asyncio.sleep(30)
+
+        if manager.active_connections:
+            # Broadcast update notification
+            await manager.broadcast({
+                "type": "heartbeat",
+                "timestamp": str(asyncio.get_event_loop().time()),
+            })
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host=settings.api_host,
+        port=settings.api_port,
+        reload=settings.debug,
+        workers=1 if settings.debug else 4,
+    )

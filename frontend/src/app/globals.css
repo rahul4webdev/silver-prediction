@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f9fafb;
+  --foreground: #111827;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #111827;
+    --foreground: #f9fafb;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* Card styles */
+.card {
+  @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
+}
+
+/* Metric card */
+.metric-card {
+  @apply card;
+}
+
+.metric-card-title {
+  @apply text-sm font-medium text-gray-500 uppercase tracking-wider;
+}
+
+.metric-card-value {
+  @apply text-3xl font-bold text-gray-900 mt-2;
+}
+
+.metric-card-subtitle {
+  @apply text-sm text-gray-500 mt-1;
+}
+
+/* Direction badges */
+.badge-bullish {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800;
+}
+
+.badge-bearish {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800;
+}
+
+.badge-neutral {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800;
+}
+
+/* Chart container */
+.chart-container {
+  @apply w-full h-[400px] bg-white rounded-lg border border-gray-200;
+}
+
+/* Table styles */
+.data-table {
+  @apply min-w-full divide-y divide-gray-200;
+}
+
+.data-table th {
+  @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50;
+}
+
+.data-table td {
+  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900;
+}
+
+/* Loading spinner */
+.spinner {
+  @apply animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600;
+}
+
+.spinner-sm {
+  @apply animate-spin rounded-full h-4 w-4 border-b-2 border-white;
+}
+
+/* Table styles */
+.table {
+  @apply min-w-full divide-y divide-gray-200;
+}
+
+.table thead {
+  @apply bg-gray-50;
+}
+
+.table th {
+  @apply px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
+}
+
+.table td {
+  @apply px-4 py-3 whitespace-nowrap text-sm text-gray-900;
+}
+
+.table tbody tr {
+  @apply border-b border-gray-100 hover:bg-gray-50;
+}
+
+/* Confidence interval visualization */
+.ci-bar {
+  @apply h-2 rounded-full;
+}
+
+.ci-bar-50 {
+  @apply bg-blue-400;
+}
+
+.ci-bar-80 {
+  @apply bg-blue-300;
+}
+
+.ci-bar-95 {
+  @apply bg-blue-200;
+}
