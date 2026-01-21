@@ -14,9 +14,22 @@ import pandas as pd
 
 from app.core.constants import INTERVAL_CONFIGS, PredictionInterval
 from app.ml.models.base import BaseModel, PredictionResult
-from app.ml.models.prophet_model import ProphetModel
-from app.ml.models.lstm_model import LSTMModel
-from app.ml.models.xgboost_model import XGBoostModel
+
+# Optional imports - these may not be available
+try:
+    from app.ml.models.prophet_model import ProphetModel
+except ImportError:
+    ProphetModel = None
+
+try:
+    from app.ml.models.lstm_model import LSTMModel
+except ImportError:
+    LSTMModel = None
+
+try:
+    from app.ml.models.xgboost_model import XGBoostModel
+except ImportError:
+    XGBoostModel = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +54,17 @@ class EnsemblePredictor:
         self.models_path = Path(models_path)
         self.models_path.mkdir(parents=True, exist_ok=True)
 
-        # Initialize models
-        self.prophet = ProphetModel()
-        self.lstm = LSTMModel()
-        self.xgboost = XGBoostModel()
+        # Initialize models (only if available)
+        self.prophet = ProphetModel() if ProphetModel else None
+        self.lstm = LSTMModel() if LSTMModel else None
+        self.xgboost = XGBoostModel() if XGBoostModel else None
+
+        # Log which models are available
+        available = []
+        if self.prophet: available.append("prophet")
+        if self.lstm: available.append("lstm")
+        if self.xgboost: available.append("xgboost")
+        logger.info(f"Available models: {available}")
 
         # Get default weights for interval
         interval_enum = PredictionInterval(interval) if interval in [e.value for e in PredictionInterval] else PredictionInterval.THIRTY_MIN
@@ -82,28 +102,40 @@ class EnsemblePredictor:
         results = {}
 
         # Train Prophet
-        try:
-            logger.info("Training Prophet model...")
-            results["prophet"] = self.prophet.train(df, target_col, validation_split)
-        except Exception as e:
-            logger.error(f"Prophet training failed: {e}")
-            results["prophet"] = {"error": str(e)}
+        if self.prophet:
+            try:
+                logger.info("Training Prophet model...")
+                results["prophet"] = self.prophet.train(df, target_col, validation_split)
+            except Exception as e:
+                logger.error(f"Prophet training failed: {e}")
+                results["prophet"] = {"error": str(e)}
+        else:
+            logger.warning("Prophet model not available, skipping")
+            results["prophet"] = {"error": "Model not installed"}
 
         # Train LSTM (needs features)
-        try:
-            logger.info("Training LSTM model...")
-            results["lstm"] = self.lstm.train(df, target_col, validation_split)
-        except Exception as e:
-            logger.error(f"LSTM training failed: {e}")
-            results["lstm"] = {"error": str(e)}
+        if self.lstm:
+            try:
+                logger.info("Training LSTM model...")
+                results["lstm"] = self.lstm.train(df, target_col, validation_split)
+            except Exception as e:
+                logger.error(f"LSTM training failed: {e}")
+                results["lstm"] = {"error": str(e)}
+        else:
+            logger.warning("LSTM model not available, skipping")
+            results["lstm"] = {"error": "Model not installed"}
 
         # Train XGBoost
-        try:
-            logger.info("Training XGBoost model...")
-            results["xgboost"] = self.xgboost.train(df, target_col, validation_split)
-        except Exception as e:
-            logger.error(f"XGBoost training failed: {e}")
-            results["xgboost"] = {"error": str(e)}
+        if self.xgboost:
+            try:
+                logger.info("Training XGBoost model...")
+                results["xgboost"] = self.xgboost.train(df, target_col, validation_split)
+            except Exception as e:
+                logger.error(f"XGBoost training failed: {e}")
+                results["xgboost"] = {"error": str(e)}
+        else:
+            logger.warning("XGBoost model not available, skipping")
+            results["xgboost"] = {"error": "Model not installed"}
 
         self.is_trained = True
         self.last_trained = datetime.now()
@@ -175,10 +207,13 @@ class EnsemblePredictor:
             ("xgboost", self.xgboost),
         ]:
             try:
-                if model.is_trained:
+                if model is not None and model.is_trained:
                     pred = model.predict(df, horizon, current_price)
                     predictions[model_name] = pred
                     valid_predictions.append((model_name, pred))
+                elif model is None:
+                    logger.debug(f"Model {model_name} not available")
+                    predictions[model_name] = None
             except Exception as e:
                 logger.error(f"Prediction failed for {model_name}: {e}")
                 predictions[model_name] = None
@@ -302,6 +337,8 @@ class EnsemblePredictor:
             ("lstm", self.lstm),
             ("xgboost", self.xgboost),
         ]:
+            if model is None:
+                continue
             path = self.models_path / f"{model_name}_{self.interval}{suffix}.pkl"
             try:
                 model.save(str(path))
@@ -329,6 +366,8 @@ class EnsemblePredictor:
             ("lstm", self.lstm),
             ("xgboost", self.xgboost),
         ]:
+            if model is None:
+                continue
             path = self.models_path / f"{model_name}_{self.interval}{suffix}.pkl"
             try:
                 if path.exists():
@@ -352,14 +391,17 @@ class EnsemblePredictor:
 
     def get_info(self) -> Dict[str, Any]:
         """Get ensemble information."""
+        models_info = {}
+        for name, model in [("prophet", self.prophet), ("lstm", self.lstm), ("xgboost", self.xgboost)]:
+            if model is not None:
+                models_info[name] = model.get_model_info()
+            else:
+                models_info[name] = {"available": False, "error": "Model not installed"}
+
         return {
             "interval": self.interval,
             "is_trained": self.is_trained,
             "last_trained": self.last_trained.isoformat() if self.last_trained else None,
             "weights": self.weights,
-            "models": {
-                "prophet": self.prophet.get_model_info(),
-                "lstm": self.lstm.get_model_info(),
-                "xgboost": self.xgboost.get_model_info(),
-            },
+            "models": models_info,
         }
