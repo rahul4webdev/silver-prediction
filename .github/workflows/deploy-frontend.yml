@@ -82,13 +82,11 @@ jobs:
             echo "Installing dependencies..."
             npm ci
 
-            # Create .env.local (without leading spaces)
+            # Create .env.local
             echo "Creating .env.local..."
-            cat > .env.local << 'ENVEOF'
-NEXT_PUBLIC_API_URL=https://predictionapi.gahfaudio.in
-NEXT_PUBLIC_WS_URL=wss://predictionapi.gahfaudio.in
-NEXT_PUBLIC_APP_NAME=Silver Prediction
-ENVEOF
+            echo "NEXT_PUBLIC_API_URL=https://predictionapi.gahfaudio.in" > .env.local
+            echo "NEXT_PUBLIC_WS_URL=wss://predictionapi.gahfaudio.in" >> .env.local
+            echo "NEXT_PUBLIC_APP_NAME=Silver Prediction" >> .env.local
 
             # Build the application
             echo "Building frontend..."

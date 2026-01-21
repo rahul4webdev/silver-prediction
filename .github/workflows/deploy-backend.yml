@@ -92,6 +92,19 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_SSH_PORT }}
+          envs: SECRET_KEY,UPSTOX_API_KEY,UPSTOX_API_SECRET,UPSTOX_ACCESS_TOKEN,POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,REDIS_HOST,REDIS_PORT
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
+          UPSTOX_API_SECRET: ${{ secrets.UPSTOX_API_SECRET }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_HOST: ${{ secrets.REDIS_HOST }}
+          REDIS_PORT: ${{ secrets.REDIS_PORT }}
           script: |
             set -e
 
@@ -132,32 +145,35 @@ jobs:
             pip install --upgrade pip
             pip install -r backend/requirements.txt
 
-            # Create .env file (without leading spaces)
+            # Create .env file
             echo "Creating .env file..."
-            cat > .env << 'ENVEOF'
-ENVIRONMENT=production
-DEBUG=false
-SECRET_KEY=${{ secrets.SECRET_KEY }}
-UPSTOX_API_KEY=${{ secrets.UPSTOX_API_KEY }}
-UPSTOX_API_SECRET=${{ secrets.UPSTOX_API_SECRET }}
-UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback
-UPSTOX_ACCESS_TOKEN=${{ secrets.UPSTOX_ACCESS_TOKEN }}
-POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
-POSTGRES_PORT=${{ secrets.POSTGRES_PORT }}
-POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-REDIS_HOST=${{ secrets.REDIS_HOST }}
-REDIS_PORT=${{ secrets.REDIS_PORT }}
-CELERY_BROKER_URL=redis://${{ secrets.REDIS_HOST }}:${{ secrets.REDIS_PORT }}/0
-CELERY_RESULT_BACKEND=redis://${{ secrets.REDIS_HOST }}:${{ secrets.REDIS_PORT }}/0
-API_HOST=127.0.0.1
-API_PORT=8023
-API_DOMAIN=predictionapi.gahfaudio.in
-FRONTEND_URL=https://prediction.gahfaudio.in
-DASHBOARD_DOMAIN=prediction.gahfaudio.in
-MODEL_WEIGHTS_PATH=/home/predictionapi.gahfaudio.in/data/models
-ENVEOF
+            cat > .env << EOF
+            ENVIRONMENT=production
+            DEBUG=false
+            SECRET_KEY=${SECRET_KEY}
+            UPSTOX_API_KEY=${UPSTOX_API_KEY}
+            UPSTOX_API_SECRET=${UPSTOX_API_SECRET}
+            UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback
+            UPSTOX_ACCESS_TOKEN=${UPSTOX_ACCESS_TOKEN}
+            POSTGRES_HOST=${POSTGRES_HOST}
+            POSTGRES_PORT=${POSTGRES_PORT}
+            POSTGRES_DB=${POSTGRES_DB}
+            POSTGRES_USER=${POSTGRES_USER}
+            POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            REDIS_HOST=${REDIS_HOST}
+            REDIS_PORT=${REDIS_PORT}
+            CELERY_BROKER_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+            CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:${REDIS_PORT}/0
+            API_HOST=127.0.0.1
+            API_PORT=8023
+            API_DOMAIN=predictionapi.gahfaudio.in
+            FRONTEND_URL=https://prediction.gahfaudio.in
+            DASHBOARD_DOMAIN=prediction.gahfaudio.in
+            MODEL_WEIGHTS_PATH=/home/predictionapi.gahfaudio.in/data/models
+            EOF
+
+            # Remove leading spaces from .env file
+            sed -i 's/^[[:space:]]*//' .env
 
             # Copy supervisor configs
             echo "Setting up supervisor configs..."
