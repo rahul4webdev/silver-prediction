@@ -2,7 +2,7 @@
 Application configuration using Pydantic Settings.
 Loads environment variables and provides typed configuration.
 
-Configuration is loaded from environment variables and .env file on startup.
+Configuration is loaded from environment variables and .env file at application startup.
 """
 
 from functools import lru_cache
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Database
     # ==========================================================================
-    postgres_host: str = Field(default="localhost", description="PostgreSQL host")
+    postgres_host: str = Field(default="127.0.0.1", description="PostgreSQL host")
     postgres_port: int = Field(default=5432, description="PostgreSQL port")
     postgres_db: str = Field(
         default="silver_prediction", description="PostgreSQL database name"
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Redis
     # ==========================================================================
-    redis_host: str = Field(default="localhost", description="Redis host")
+    redis_host: str = Field(default="127.0.0.1", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
 

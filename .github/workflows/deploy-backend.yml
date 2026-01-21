@@ -162,8 +162,13 @@ jobs:
             pip install --upgrade pip
             pip install -r backend/requirements.txt
 
-            # Create .env file
+            # Create .env file with fallback to 127.0.0.1 if not set
             echo "Creating .env file..."
+            PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
+            PG_PORT="${POSTGRES_PORT:-5432}"
+            RD_HOST="${REDIS_HOST:-127.0.0.1}"
+            RD_PORT="${REDIS_PORT:-6379}"
+
             cat > .env << ENVEOF
             ENVIRONMENT=production
             DEBUG=false
@@ -172,15 +177,15 @@ jobs:
             UPSTOX_API_SECRET=${UPSTOX_API_SECRET}
             UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback
             UPSTOX_ACCESS_TOKEN=${UPSTOX_ACCESS_TOKEN}
-            POSTGRES_HOST=${POSTGRES_HOST}
-            POSTGRES_PORT=${POSTGRES_PORT}
-            POSTGRES_DB=${POSTGRES_DB}
-            POSTGRES_USER=${POSTGRES_USER}
+            POSTGRES_HOST=${PG_HOST}
+            POSTGRES_PORT=${PG_PORT}
+            POSTGRES_DB=${POSTGRES_DB:-silver_prediction}
+            POSTGRES_USER=${POSTGRES_USER:-prediction_user}
             POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-            REDIS_HOST=${REDIS_HOST}
-            REDIS_PORT=${REDIS_PORT}
-            CELERY_BROKER_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
-            CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:${REDIS_PORT}/0
+            REDIS_HOST=${RD_HOST}
+            REDIS_PORT=${RD_PORT}
+            CELERY_BROKER_URL=redis://${RD_HOST}:${RD_PORT}/0
+            CELERY_RESULT_BACKEND=redis://${RD_HOST}:${RD_PORT}/0
             API_HOST=127.0.0.1
             API_PORT=8023
             API_DOMAIN=predictionapi.gahfaudio.in
@@ -191,6 +196,9 @@ jobs:
 
             # Remove leading whitespace from .env
             sed -i 's/^[[:space:]]*//' .env
+
+            # Copy .env to backend directory as well (systemd runs from there)
+            cp .env backend/.env
 
             # Copy systemd service files
             echo "Setting up systemd service files..."
