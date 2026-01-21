@@ -47,10 +47,14 @@ export async function getLatestPrediction(
   asset: string = 'silver',
   market?: string,
   interval?: string
-): Promise<Prediction> {
+): Promise<Prediction | null> {
   const response = await api.get('/predictions/latest', {
     params: { asset, market, interval },
   });
+  // Check if we got a valid prediction or a "no_predictions" status
+  if (response.data.status === 'no_predictions' || response.data.status === 'error') {
+    return null;
+  }
   return response.data;
 }
 

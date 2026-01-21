@@ -211,18 +211,24 @@ export default function DashboardPage() {
                     className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
                   >
                     <div>
-                      <span
-                        className={`badge-${pred.predicted_direction} text-xs`}
-                      >
-                        {pred.predicted_direction.toUpperCase()}
-                      </span>
+                      {pred.predicted_direction ? (
+                        <span
+                          className={`badge-${pred.predicted_direction} text-xs`}
+                        >
+                          {pred.predicted_direction.toUpperCase()}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">Unknown</span>
+                      )}
                       <p className="text-xs text-gray-500 mt-1">
-                        {new Date(pred.target_time).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {pred.target_time
+                          ? new Date(pred.target_time).toLocaleString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'N/A'}
                       </p>
                     </div>
                     <div className="text-right">

@@ -116,7 +116,7 @@ export default function HomePage() {
       </div>
 
       {/* Latest Prediction */}
-      {latestPrediction && (
+      {latestPrediction && latestPrediction.predicted_direction ? (
         <div className="card mb-8">
           <h3 className="text-lg font-medium text-gray-900 mb-4">
             Latest Prediction
@@ -133,26 +133,39 @@ export default function HomePage() {
             <div>
               <p className="text-sm text-gray-500">Current Price</p>
               <p className="text-lg font-semibold">
-                {latestPrediction.current_price.toFixed(2)}
+                {latestPrediction.current_price?.toFixed(2) ?? 'N/A'}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Predicted Price</p>
               <p className="text-lg font-semibold">
-                {latestPrediction.predicted_price.toFixed(2)}
+                {latestPrediction.predicted_price?.toFixed(2) ?? 'N/A'}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Confidence</p>
               <p className="text-lg font-semibold">
-                {(latestPrediction.direction_confidence * 100).toFixed(1)}%
+                {latestPrediction.direction_confidence
+                  ? (latestPrediction.direction_confidence * 100).toFixed(1) + '%'
+                  : 'N/A'}
               </p>
             </div>
           </div>
           <div className="mt-4 text-sm text-gray-500">
             Target time:{' '}
-            {new Date(latestPrediction.target_time).toLocaleString()}
+            {latestPrediction.target_time
+              ? new Date(latestPrediction.target_time).toLocaleString()
+              : 'N/A'}
           </div>
+        </div>
+      ) : (
+        <div className="card mb-8">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Latest Prediction
+          </h3>
+          <p className="text-sm text-gray-500">
+            No predictions available yet. Train the models first to generate predictions.
+          </p>
         </div>
       )}
 

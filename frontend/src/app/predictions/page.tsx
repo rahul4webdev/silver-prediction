@@ -179,22 +179,28 @@ export default function PredictionsPage() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className={`badge-${pred.predicted_direction}`}>
-                        {pred.predicted_direction.toUpperCase()}
-                      </span>
+                      {pred.predicted_direction ? (
+                        <span className={`badge-${pred.predicted_direction}`}>
+                          {pred.predicted_direction.toUpperCase()}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">Unknown</span>
+                      )}
                       <span className="text-xs text-gray-500 uppercase bg-gray-100 px-2 py-0.5 rounded">
-                        {pred.market}
+                        {pred.market || 'N/A'}
                       </span>
-                      <span className="text-xs text-gray-500">{pred.interval}</span>
+                      <span className="text-xs text-gray-500">{pred.interval || 'N/A'}</span>
                     </div>
                     <p className="text-sm text-gray-600 mt-1">
                       Target:{' '}
-                      {new Date(pred.target_time).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {pred.target_time
+                        ? new Date(pred.target_time).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : 'N/A'}
                     </p>
                   </div>
                 </div>
@@ -204,14 +210,14 @@ export default function PredictionsPage() {
                   <div className="text-center">
                     <p className="text-xs text-gray-500">Current</p>
                     <p className="font-mono font-medium">
-                      {pred.current_price.toFixed(2)}
+                      {pred.current_price?.toFixed(2) ?? 'N/A'}
                     </p>
                   </div>
                   <div className="text-gray-300">→</div>
                   <div className="text-center">
                     <p className="text-xs text-gray-500">Predicted</p>
                     <p className="font-mono font-medium text-primary-600">
-                      {pred.predicted_price.toFixed(2)}
+                      {pred.predicted_price?.toFixed(2) ?? 'N/A'}
                     </p>
                   </div>
                   {pred.actual_price && (
@@ -236,7 +242,9 @@ export default function PredictionsPage() {
                   <div className="text-center">
                     <p className="text-xs text-gray-500">Confidence</p>
                     <p className="font-semibold">
-                      {(pred.direction_confidence * 100).toFixed(1)}%
+                      {pred.direction_confidence
+                        ? (pred.direction_confidence * 100).toFixed(1) + '%'
+                        : 'N/A'}
                     </p>
                   </div>
                   <div className="text-center min-w-[120px]">
