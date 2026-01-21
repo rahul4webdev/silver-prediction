@@ -1,3 +1,0 @@
-# This file is used to trigger deployments
-# Update this timestamp to trigger both frontend and backend workflows
-# Last trigger: 2026-01-21T13:25:00Z

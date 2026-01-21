@@ -5,8 +5,8 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'deploy/systemd/**'
       - '.github/workflows/deploy-backend.yml'
-      - '.github/workflows/trigger.txt'
   workflow_dispatch:
 
 env:
