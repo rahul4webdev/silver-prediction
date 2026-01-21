@@ -28,37 +28,48 @@ async def get_historical_data(
     """
     Get historical OHLCV data for an asset/market.
     """
-    conditions = [
-        PriceData.asset == asset,
-        PriceData.market == market,
-        PriceData.interval == interval,
-    ]
+    try:
+        conditions = [
+            PriceData.asset == asset,
+            PriceData.market == market,
+            PriceData.interval == interval,
+        ]
 
-    if start_date:
-        conditions.append(PriceData.timestamp >= start_date)
-    if end_date:
-        conditions.append(PriceData.timestamp <= end_date)
+        if start_date:
+            conditions.append(PriceData.timestamp >= start_date)
+        if end_date:
+            conditions.append(PriceData.timestamp <= end_date)
 
-    query = (
-        select(PriceData)
-        .where(and_(*conditions))
-        .order_by(desc(PriceData.timestamp))
-        .limit(limit)
-    )
+        query = (
+            select(PriceData)
+            .where(and_(*conditions))
+            .order_by(desc(PriceData.timestamp))
+            .limit(limit)
+        )
 
-    result = await db.execute(query)
-    rows = result.scalars().all()
+        result = await db.execute(query)
+        rows = result.scalars().all()
 
-    # Sort by timestamp (oldest first) for charting
-    candles = sorted([r.to_dict() for r in rows], key=lambda x: x["timestamp"])
+        # Sort by timestamp (oldest first) for charting
+        candles = sorted([r.to_dict() for r in rows], key=lambda x: x["timestamp"])
 
-    return {
-        "asset": asset,
-        "market": market,
-        "interval": interval,
-        "count": len(candles),
-        "candles": candles,
-    }
+        return {
+            "asset": asset,
+            "market": market,
+            "interval": interval,
+            "count": len(candles),
+            "candles": candles,
+        }
+    except Exception as e:
+        # Return empty data instead of 500 error
+        return {
+            "asset": asset,
+            "market": market,
+            "interval": interval,
+            "count": 0,
+            "candles": [],
+            "message": f"No data available: {str(e)}",
+        }
 
 
 @router.get("/{asset}/{market}/latest")
@@ -71,26 +82,40 @@ async def get_latest_price(
     """
     Get the latest price data.
     """
-    query = (
-        select(PriceData)
-        .where(
-            and_(
-                PriceData.asset == asset,
-                PriceData.market == market,
-                PriceData.interval == interval,
+    try:
+        query = (
+            select(PriceData)
+            .where(
+                and_(
+                    PriceData.asset == asset,
+                    PriceData.market == market,
+                    PriceData.interval == interval,
+                )
             )
+            .order_by(desc(PriceData.timestamp))
+            .limit(1)
         )
-        .order_by(desc(PriceData.timestamp))
-        .limit(1)
-    )
 
-    result = await db.execute(query)
-    price_data = result.scalar_one_or_none()
+        result = await db.execute(query)
+        price_data = result.scalar_one_or_none()
 
-    if not price_data:
-        raise HTTPException(status_code=404, detail="No price data found")
+        if not price_data:
+            return {
+                "status": "no_data",
+                "message": "No price data available yet",
+                "asset": asset,
+                "market": market,
+                "interval": interval,
+            }
 
-    return price_data.to_dict()
+        return price_data.to_dict()
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error fetching data: {str(e)}",
+            "asset": asset,
+            "market": market,
+        }
 
 
 @router.get("/{asset}/{market}/stats")
@@ -104,85 +129,103 @@ async def get_price_stats(
     """
     Get price statistics for the specified period.
     """
-    since = datetime.utcnow() - timedelta(days=period_days)
+    try:
+        since = datetime.utcnow() - timedelta(days=period_days)
 
-    query = (
-        select(
-            func.min(PriceData.low).label("low"),
-            func.max(PriceData.high).label("high"),
-            func.avg(PriceData.close).label("avg_close"),
-            func.count(PriceData.id).label("count"),
-            func.sum(PriceData.volume).label("total_volume"),
-        )
-        .where(
-            and_(
-                PriceData.asset == asset,
-                PriceData.market == market,
-                PriceData.interval == interval,
-                PriceData.timestamp >= since,
+        query = (
+            select(
+                func.min(PriceData.low).label("low"),
+                func.max(PriceData.high).label("high"),
+                func.avg(PriceData.close).label("avg_close"),
+                func.count(PriceData.id).label("count"),
+                func.sum(PriceData.volume).label("total_volume"),
+            )
+            .where(
+                and_(
+                    PriceData.asset == asset,
+                    PriceData.market == market,
+                    PriceData.interval == interval,
+                    PriceData.timestamp >= since,
+                )
             )
         )
-    )
 
-    result = await db.execute(query)
-    row = result.one()
+        result = await db.execute(query)
+        row = result.one()
 
-    # Get first and last prices for change calculation
-    first_query = (
-        select(PriceData.close)
-        .where(
-            and_(
-                PriceData.asset == asset,
-                PriceData.market == market,
-                PriceData.interval == interval,
-                PriceData.timestamp >= since,
+        # Get first and last prices for change calculation
+        first_query = (
+            select(PriceData.close)
+            .where(
+                and_(
+                    PriceData.asset == asset,
+                    PriceData.market == market,
+                    PriceData.interval == interval,
+                    PriceData.timestamp >= since,
+                )
             )
+            .order_by(PriceData.timestamp)
+            .limit(1)
         )
-        .order_by(PriceData.timestamp)
-        .limit(1)
-    )
 
-    last_query = (
-        select(PriceData.close)
-        .where(
-            and_(
-                PriceData.asset == asset,
-                PriceData.market == market,
-                PriceData.interval == interval,
-                PriceData.timestamp >= since,
+        last_query = (
+            select(PriceData.close)
+            .where(
+                and_(
+                    PriceData.asset == asset,
+                    PriceData.market == market,
+                    PriceData.interval == interval,
+                    PriceData.timestamp >= since,
+                )
             )
+            .order_by(desc(PriceData.timestamp))
+            .limit(1)
         )
-        .order_by(desc(PriceData.timestamp))
-        .limit(1)
-    )
 
-    first_result = await db.execute(first_query)
-    first_price = first_result.scalar_one_or_none()
+        first_result = await db.execute(first_query)
+        first_price = first_result.scalar_one_or_none()
 
-    last_result = await db.execute(last_query)
-    last_price = last_result.scalar_one_or_none()
+        last_result = await db.execute(last_query)
+        last_price = last_result.scalar_one_or_none()
 
-    change = None
-    change_percent = None
-    if first_price and last_price:
-        change = float(last_price) - float(first_price)
-        change_percent = (change / float(first_price)) * 100
+        change = None
+        change_percent = None
+        if first_price and last_price:
+            change = float(last_price) - float(first_price)
+            change_percent = (change / float(first_price)) * 100
 
-    return {
-        "asset": asset,
-        "market": market,
-        "interval": interval,
-        "period_days": period_days,
-        "stats": {
-            "low": float(row.low) if row.low else None,
-            "high": float(row.high) if row.high else None,
-            "avg_close": float(row.avg_close) if row.avg_close else None,
-            "candle_count": row.count,
-            "total_volume": row.total_volume,
-            "price_change": change,
-            "change_percent": change_percent,
-        },
-    }
+        return {
+            "asset": asset,
+            "market": market,
+            "interval": interval,
+            "period_days": period_days,
+            "stats": {
+                "low": float(row.low) if row.low else None,
+                "high": float(row.high) if row.high else None,
+                "avg_close": float(row.avg_close) if row.avg_close else None,
+                "candle_count": row.count,
+                "total_volume": row.total_volume,
+                "price_change": change,
+                "change_percent": change_percent,
+            },
+        }
+    except Exception as e:
+        return {
+            "asset": asset,
+            "market": market,
+            "interval": interval,
+            "period_days": period_days,
+            "stats": {
+                "low": None,
+                "high": None,
+                "avg_close": None,
+                "candle_count": 0,
+                "total_volume": None,
+                "price_change": None,
+                "change_percent": None,
+            },
+            "message": f"No data available: {str(e)}",
+        }
 
 
 @router.get("/factors")
@@ -193,28 +236,35 @@ async def get_market_factors(
     """
     Get correlated market factors data.
     """
-    from app.models.market_factors import MarketFactor
+    try:
+        from app.models.market_factors import MarketFactor
 
-    since = datetime.utcnow() - timedelta(days=period_days)
+        since = datetime.utcnow() - timedelta(days=period_days)
 
-    query = (
-        select(MarketFactor)
-        .where(MarketFactor.timestamp >= since)
-        .order_by(desc(MarketFactor.timestamp))
-        .limit(100)
-    )
+        query = (
+            select(MarketFactor)
+            .where(MarketFactor.timestamp >= since)
+            .order_by(desc(MarketFactor.timestamp))
+            .limit(100)
+        )
 
-    result = await db.execute(query)
-    factors = result.scalars().all()
+        result = await db.execute(query)
+        factors = result.scalars().all()
 
-    # Group by factor code
-    grouped = {}
-    for f in factors:
-        if f.factor_code not in grouped:
-            grouped[f.factor_code] = []
-        grouped[f.factor_code].append(f.to_dict())
+        # Group by factor code
+        grouped = {}
+        for f in factors:
+            if f.factor_code not in grouped:
+                grouped[f.factor_code] = []
+            grouped[f.factor_code].append(f.to_dict())
 
-    return {
-        "period_days": period_days,
-        "factors": grouped,
-    }
+        return {
+            "period_days": period_days,
+            "factors": grouped,
+        }
+    except Exception as e:
+        return {
+            "period_days": period_days,
+            "factors": {},
+            "message": f"No data available: {str(e)}",
+        }

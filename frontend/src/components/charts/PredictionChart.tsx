@@ -30,30 +30,38 @@ export default function PredictionChart({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Create chart
+    // Create chart with dark theme
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { color: '#ffffff' },
-        textColor: '#333',
+        background: { color: 'transparent' },
+        textColor: '#a1a1aa',
       },
       grid: {
-        vertLines: { color: '#f0f0f0' },
-        horzLines: { color: '#f0f0f0' },
+        vertLines: { color: 'rgba(255, 255, 255, 0.05)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
       },
       width: chartContainerRef.current.clientWidth,
       height: 500,
       crosshair: {
         mode: 1,
+        vertLine: {
+          color: 'rgba(0, 212, 255, 0.3)',
+          labelBackgroundColor: '#16213e',
+        },
+        horzLine: {
+          color: 'rgba(0, 212, 255, 0.3)',
+          labelBackgroundColor: '#16213e',
+        },
       },
       rightPriceScale: {
-        borderColor: '#e0e0e0',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
         scaleMargins: {
           top: 0.1,
           bottom: 0.2,
         },
       },
       timeScale: {
-        borderColor: '#e0e0e0',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -207,28 +215,28 @@ export default function PredictionChart({
   }, [prediction, priceData, showCIBands]);
 
   return (
-    <div className="relative">
+    <div className="relative bg-[#16213e]/50 rounded-xl">
       {/* Chart Controls */}
       <div className="absolute top-4 left-4 z-10 flex items-center gap-4">
-        <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm border border-gray-200">
-          <span className="text-sm font-medium text-gray-700">
+        <div className="bg-[#16213e]/90 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
+          <span className="text-sm font-medium text-zinc-300">
             Silver {market.toUpperCase()} • {interval}
           </span>
         </div>
-        <label className="flex items-center gap-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm border border-gray-200 cursor-pointer">
+        <label className="flex items-center gap-2 bg-[#16213e]/90 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10 cursor-pointer">
           <input
             type="checkbox"
             checked={showCIBands}
             onChange={(e) => setShowCIBands(e.target.checked)}
-            className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+            className="w-4 h-4 text-cyan-500 bg-zinc-800 border-zinc-600 rounded focus:ring-cyan-500"
           />
-          <span className="text-sm text-gray-700">Show CI Bands</span>
+          <span className="text-sm text-zinc-300">Show CI Bands</span>
         </label>
       </div>
 
       {/* Legend */}
-      <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-gray-200">
-        <div className="flex items-center gap-4 text-xs">
+      <div className="absolute top-4 right-4 z-10 bg-[#16213e]/90 backdrop-blur px-3 py-2 rounded-lg border border-white/10">
+        <div className="flex items-center gap-4 text-xs text-zinc-400">
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-green-500 rounded"></div>
             <span>Bullish</span>
@@ -248,30 +256,30 @@ export default function PredictionChart({
       <div ref={chartContainerRef} className="w-full" />
 
       {/* Prediction Marker */}
-      {prediction && (
-        <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-3 rounded-lg shadow-sm border border-gray-200">
+      {prediction && prediction.predicted_direction && (
+        <div className="absolute bottom-4 left-4 z-10 bg-[#16213e]/90 backdrop-blur px-4 py-3 rounded-lg border border-white/10">
           <div className="flex items-center gap-4">
             <div>
-              <p className="text-xs text-gray-500">Predicted Direction</p>
+              <p className="text-xs text-zinc-500">Predicted Direction</p>
               <span className={`badge-${prediction.predicted_direction} mt-1`}>
                 {prediction.predicted_direction.toUpperCase()}
               </span>
             </div>
-            <div className="border-l border-gray-200 pl-4">
-              <p className="text-xs text-gray-500">Confidence</p>
-              <p className="text-lg font-semibold">
-                {(prediction.direction_confidence * 100).toFixed(1)}%
+            <div className="border-l border-white/10 pl-4">
+              <p className="text-xs text-zinc-500">Confidence</p>
+              <p className="text-lg font-semibold text-cyan-400">
+                {((prediction.direction_confidence ?? 0) * 100).toFixed(1)}%
               </p>
             </div>
-            <div className="border-l border-gray-200 pl-4">
-              <p className="text-xs text-gray-500">Target Time</p>
-              <p className="text-sm font-medium">
-                {new Date(prediction.target_time).toLocaleString(undefined, {
+            <div className="border-l border-white/10 pl-4">
+              <p className="text-xs text-zinc-500">Target Time</p>
+              <p className="text-sm font-medium text-zinc-300">
+                {prediction.target_time ? new Date(prediction.target_time).toLocaleString(undefined, {
                   month: 'short',
                   day: 'numeric',
                   hour: '2-digit',
                   minute: '2-digit',
-                })}
+                }) : 'N/A'}
               </p>
             </div>
           </div>

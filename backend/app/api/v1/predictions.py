@@ -108,32 +108,41 @@ async def get_prediction_history(
     """
     Get prediction history with optional filters.
     """
-    conditions = [Prediction.asset == asset]
+    try:
+        conditions = [Prediction.asset == asset]
 
-    if market:
-        conditions.append(Prediction.market == market)
-    if interval:
-        conditions.append(Prediction.interval == interval)
-    if verified_only:
-        conditions.append(Prediction.verified_at.isnot(None))
+        if market:
+            conditions.append(Prediction.market == market)
+        if interval:
+            conditions.append(Prediction.interval == interval)
+        if verified_only:
+            conditions.append(Prediction.verified_at.isnot(None))
 
-    query = (
-        select(Prediction)
-        .where(and_(*conditions))
-        .order_by(desc(Prediction.created_at))
-        .offset(offset)
-        .limit(limit)
-    )
+        query = (
+            select(Prediction)
+            .where(and_(*conditions))
+            .order_by(desc(Prediction.created_at))
+            .offset(offset)
+            .limit(limit)
+        )
 
-    result = await db.execute(query)
-    predictions = result.scalars().all()
+        result = await db.execute(query)
+        predictions = result.scalars().all()
 
-    return {
-        "total": len(predictions),
-        "offset": offset,
-        "limit": limit,
-        "predictions": [p.to_dict() for p in predictions],
-    }
+        return {
+            "total": len(predictions),
+            "offset": offset,
+            "limit": limit,
+            "predictions": [p.to_dict() for p in predictions],
+        }
+    except Exception as e:
+        return {
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "predictions": [],
+            "message": f"No data available: {str(e)}",
+        }
 
 
 @router.post("/verify")
