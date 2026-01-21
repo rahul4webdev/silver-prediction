@@ -65,17 +65,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Configure CORS - allow frontend domains
+cors_origins = [
+    "https://prediction.gahfaudio.in",
+    "http://prediction.gahfaudio.in",
+    "https://predictionapi.gahfaudio.in",
+    "http://predictionapi.gahfaudio.in",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8024",
+    "http://127.0.0.1:8024",
+]
+
+# Add settings.frontend_url if configured
+if settings.frontend_url and settings.frontend_url not in cors_origins:
+    cors_origins.append(settings.frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include API routes
