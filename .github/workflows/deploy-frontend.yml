@@ -64,6 +64,17 @@ jobs:
 
             # Frontend path on CyberPanel
             FRONTEND_PATH="/home/prediction.gahfaudio.in/public_html"
+            REPO_URL="https://github.com/rahul4webdev/silver-prediction.git"
+
+            # Check if git repo exists, if not clone it
+            if [ ! -d "$FRONTEND_PATH/.git" ]; then
+              echo "Git repository not found, cloning..."
+              # Remove existing files if any
+              rm -rf $FRONTEND_PATH/*
+              rm -rf $FRONTEND_PATH/.[!.]* 2>/dev/null || true
+              # Clone the repository
+              git clone $REPO_URL $FRONTEND_PATH
+            fi
 
             # Navigate to project directory
             cd $FRONTEND_PATH

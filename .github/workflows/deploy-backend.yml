@@ -113,6 +113,17 @@ jobs:
             BACKEND_PATH="/home/predictionapi.gahfaudio.in/public_html"
             DATA_PATH="/home/predictionapi.gahfaudio.in/data"
             LOGS_PATH="/home/predictionapi.gahfaudio.in/logs"
+            REPO_URL="https://github.com/rahul4webdev/silver-prediction.git"
+
+            # Check if git repo exists, if not clone it
+            if [ ! -d "$BACKEND_PATH/.git" ]; then
+              echo "Git repository not found, cloning..."
+              # Remove existing files if any
+              rm -rf $BACKEND_PATH/*
+              rm -rf $BACKEND_PATH/.[!.]* 2>/dev/null || true
+              # Clone the repository
+              git clone $REPO_URL $BACKEND_PATH
+            fi
 
             # Navigate to project directory
             cd $BACKEND_PATH
