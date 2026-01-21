@@ -59,27 +59,40 @@ async def get_latest_prediction(
     """
     Get the most recent prediction.
     """
-    conditions = [Prediction.asset == asset]
+    try:
+        conditions = [Prediction.asset == asset]
 
-    if market:
-        conditions.append(Prediction.market == market)
-    if interval:
-        conditions.append(Prediction.interval == interval)
+        if market:
+            conditions.append(Prediction.market == market)
+        if interval:
+            conditions.append(Prediction.interval == interval)
 
-    query = (
-        select(Prediction)
-        .where(and_(*conditions))
-        .order_by(desc(Prediction.created_at))
-        .limit(1)
-    )
+        query = (
+            select(Prediction)
+            .where(and_(*conditions))
+            .order_by(desc(Prediction.created_at))
+            .limit(1)
+        )
 
-    result = await db.execute(query)
-    prediction = result.scalar_one_or_none()
+        result = await db.execute(query)
+        prediction = result.scalar_one_or_none()
 
-    if not prediction:
-        raise HTTPException(status_code=404, detail="No prediction found")
+        if not prediction:
+            return {
+                "status": "no_predictions",
+                "message": "No predictions available yet. Models need to be trained first.",
+                "asset": asset,
+                "market": market,
+                "interval": interval,
+            }
 
-    return prediction.to_dict()
+        return prediction.to_dict()
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Database error: {str(e)}",
+            "asset": asset,
+        }
 
 
 @router.get("/history")
