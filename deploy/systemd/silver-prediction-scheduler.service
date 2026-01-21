@@ -1,0 +1,17 @@
+[Unit]
+Description=Silver Prediction Celery Beat Scheduler
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/predictionapi.gahfaudio.in/public_html/backend
+Environment="PATH=/home/predictionapi.gahfaudio.in/public_html/venv/bin:/usr/bin"
+Environment="PYTHONPATH=/home/predictionapi.gahfaudio.in/public_html/backend"
+ExecStart=/home/predictionapi.gahfaudio.in/public_html/venv/bin/celery -A workers.celery_app beat --loglevel=info
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

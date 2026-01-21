@@ -192,26 +192,29 @@ jobs:
             # Remove leading whitespace from .env
             sed -i 's/^[[:space:]]*//' .env
 
-            # Copy supervisor configs if directory exists
-            echo "Setting up supervisor configs..."
-            if [ -d "/etc/supervisord.d" ]; then
-              cp deploy/supervisor/*.conf /etc/supervisord.d/ 2>/dev/null || true
-            fi
+            # Copy systemd service files
+            echo "Setting up systemd service files..."
+            cp deploy/systemd/silver-prediction-api.service /etc/systemd/system/
+            cp deploy/systemd/silver-prediction-worker.service /etc/systemd/system/ 2>/dev/null || true
+            cp deploy/systemd/silver-prediction-scheduler.service /etc/systemd/system/ 2>/dev/null || true
 
-            # Reload and restart services
+            # Reload systemd and restart services
             echo "Restarting services..."
-            if command -v supervisorctl &> /dev/null; then
-              supervisorctl reread || true
-              supervisorctl update || true
-              supervisorctl restart silver-prediction-api 2>/dev/null || supervisorctl start silver-prediction-api 2>/dev/null || true
-              supervisorctl restart silver-prediction-worker 2>/dev/null || supervisorctl start silver-prediction-worker 2>/dev/null || true
-              supervisorctl restart silver-prediction-scheduler 2>/dev/null || supervisorctl start silver-prediction-scheduler 2>/dev/null || true
-              sleep 5
-              echo "=== Service Status ==="
-              supervisorctl status | grep silver || echo "No silver services found"
-            else
-              echo "supervisorctl not found, skipping service restart"
-            fi
+            systemctl daemon-reload
+
+            # Enable and start API service
+            systemctl enable silver-prediction-api
+            systemctl restart silver-prediction-api || systemctl start silver-prediction-api
+
+            # Enable and start worker/scheduler (optional, may not be needed initially)
+            # systemctl enable silver-prediction-worker
+            # systemctl restart silver-prediction-worker || true
+            # systemctl enable silver-prediction-scheduler
+            # systemctl restart silver-prediction-scheduler || true
+
+            sleep 5
+            echo "=== Service Status ==="
+            systemctl status silver-prediction-api --no-pager || echo "Service status check failed"
 
             echo "=== Backend Deployment Complete ==="
 
