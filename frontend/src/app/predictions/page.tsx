@@ -251,19 +251,19 @@ export default function PredictionsPage() {
                 <div>
                   <p className="text-gray-500">50% CI</p>
                   <p className="font-mono">
-                    {pred.ci_50_lower.toFixed(2)} - {pred.ci_50_upper.toFixed(2)}
+                    {(pred.ci_50_lower ?? 0).toFixed(2)} - {(pred.ci_50_upper ?? 0).toFixed(2)}
                   </p>
                 </div>
                 <div>
                   <p className="text-gray-500">80% CI</p>
                   <p className="font-mono">
-                    {pred.ci_80_lower.toFixed(2)} - {pred.ci_80_upper.toFixed(2)}
+                    {(pred.ci_80_lower ?? 0).toFixed(2)} - {(pred.ci_80_upper ?? 0).toFixed(2)}
                   </p>
                 </div>
                 <div>
                   <p className="text-gray-500">95% CI</p>
                   <p className="font-mono">
-                    {pred.ci_95_lower.toFixed(2)} - {pred.ci_95_upper.toFixed(2)}
+                    {(pred.ci_95_lower ?? 0).toFixed(2)} - {(pred.ci_95_upper ?? 0).toFixed(2)}
                   </p>
                 </div>
                 {pred.price_error_percent !== undefined && pred.price_error_percent !== null && (

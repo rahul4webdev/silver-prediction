@@ -14,13 +14,27 @@ export interface Prediction {
   predicted_price: number;
   predicted_direction: 'bullish' | 'bearish' | 'neutral';
   direction_confidence: number;
-  confidence_intervals: {
+  ci_50_lower?: number;
+  ci_50_upper?: number;
+  ci_80_lower?: number;
+  ci_80_upper?: number;
+  ci_95_lower?: number;
+  ci_95_upper?: number;
+  confidence_intervals?: {
     ci_50: { lower: number; upper: number };
     ci_80: { lower: number; upper: number };
     ci_95: { lower: number; upper: number };
   };
   model_weights: Record<string, number>;
   model_version?: string;
+  actual_price?: number | null;
+  is_direction_correct?: boolean | null;
+  price_error?: number | null;
+  price_error_percent?: number | null;
+  within_ci_50?: boolean | null;
+  within_ci_80?: boolean | null;
+  within_ci_95?: boolean | null;
+  verified_at?: string | null;
   verification?: {
     actual_price: number | null;
     is_direction_correct: boolean | null;
@@ -45,22 +59,38 @@ export interface PriceCandle {
 export interface AccuracySummary {
   total_predictions: number;
   verified_predictions: number;
-  period_days: number;
+  pending_verification?: number;
+  period_days?: number;
   direction_accuracy: {
     overall: number;
     correct: number;
-    wrong: number;
+    wrong?: number;
+    bullish_accuracy?: number;
+    bearish_accuracy?: number;
+    trend?: number[];
   };
-  confidence_interval_coverage: {
+  ci_coverage: {
+    ci_50: number;
+    ci_80: number;
+    ci_95: number;
+  };
+  confidence_interval_coverage?: {
     ci_50: number;
     ci_80: number;
     ci_95: number;
   };
   error_metrics: {
+    mae: number;
     mape: number;
+    rmse: number;
   };
-  by_interval: Record<string, { total: number; correct: number; accuracy: number }>;
-  by_market: Record<string, { total: number; correct: number; accuracy: number }>;
+  by_interval: Record<string, { predictions: number; accuracy: number; total?: number; correct?: number }>;
+  by_market: Record<string, { predictions: number; accuracy: number; total?: number; correct?: number }>;
+  streaks: {
+    current: { type: 'win' | 'loss'; count: number };
+    best_win: number;
+    worst_loss: number;
+  };
 }
 
 export interface HealthStatus {
@@ -69,6 +99,7 @@ export interface HealthStatus {
   environment?: string;
   database?: string;
   has_token?: boolean;
+  trained_models?: number;
   models?: Record<string, {
     is_trained: boolean;
     last_trained: string | null;

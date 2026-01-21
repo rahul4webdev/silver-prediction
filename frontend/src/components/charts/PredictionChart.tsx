@@ -172,7 +172,7 @@ export default function PredictionChart({
     ];
     predictionLineRef.current.setData(predictionData);
 
-    if (showCIBands) {
+    if (showCIBands && prediction.ci_80_upper && prediction.ci_80_lower) {
       // 80% CI bands
       const ci80UpperData: LineData[] = [
         { time: lastTime as Time, value: prediction.current_price },
@@ -186,16 +186,18 @@ export default function PredictionChart({
       ci80LowerRef.current?.setData(ci80LowerData);
 
       // 50% CI bands
-      const ci50UpperData: LineData[] = [
-        { time: lastTime as Time, value: prediction.current_price },
-        { time: targetTime as Time, value: prediction.ci_50_upper },
-      ];
-      const ci50LowerData: LineData[] = [
-        { time: lastTime as Time, value: prediction.current_price },
-        { time: targetTime as Time, value: prediction.ci_50_lower },
-      ];
-      ci50UpperRef.current?.setData(ci50UpperData);
-      ci50LowerRef.current?.setData(ci50LowerData);
+      if (prediction.ci_50_upper && prediction.ci_50_lower) {
+        const ci50UpperData: LineData[] = [
+          { time: lastTime as Time, value: prediction.current_price },
+          { time: targetTime as Time, value: prediction.ci_50_upper },
+        ];
+        const ci50LowerData: LineData[] = [
+          { time: lastTime as Time, value: prediction.current_price },
+          { time: targetTime as Time, value: prediction.ci_50_lower },
+        ];
+        ci50UpperRef.current?.setData(ci50UpperData);
+        ci50LowerRef.current?.setData(ci50LowerData);
+      }
     } else {
       ci50UpperRef.current?.setData([]);
       ci50LowerRef.current?.setData([]);

@@ -24,7 +24,7 @@ export default function AccuracyPage() {
 
         const [accuracyData, trendData, predictionsData] = await Promise.all([
           getAccuracySummary('silver', undefined, undefined, periodDays).catch(() => null),
-          getAccuracyTrend('silver', periodDays).catch(() => []),
+          getAccuracyTrend('silver', undefined, undefined, periodDays).catch(() => []),
           getPredictions('silver', undefined, undefined, 50, true).catch(() => []),
         ]);
 
@@ -209,7 +209,7 @@ export default function AccuracyPage() {
               </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-2xl font-bold text-gray-900">
-                  {(accuracy.direction_accuracy.bullish_accuracy * 100).toFixed(1)}%
+                  {((accuracy.direction_accuracy.bullish_accuracy ?? 0) * 100).toFixed(1)}%
                 </p>
                 <p className="text-sm text-gray-500">Bullish Accuracy</p>
               </div>

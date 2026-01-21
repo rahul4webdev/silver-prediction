@@ -98,24 +98,24 @@ export default function PredictionCard({ prediction, market }: PredictionCardPro
               <span className="text-gray-600">50% CI</span>
               <span className="font-mono">
                 {currency}
-                {prediction.ci_50_lower.toFixed(2)} - {currency}
-                {prediction.ci_50_upper.toFixed(2)}
+                {(prediction.ci_50_lower ?? 0).toFixed(2)} - {currency}
+                {(prediction.ci_50_upper ?? 0).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">80% CI</span>
               <span className="font-mono">
                 {currency}
-                {prediction.ci_80_lower.toFixed(2)} - {currency}
-                {prediction.ci_80_upper.toFixed(2)}
+                {(prediction.ci_80_lower ?? 0).toFixed(2)} - {currency}
+                {(prediction.ci_80_upper ?? 0).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">95% CI</span>
               <span className="font-mono">
                 {currency}
-                {prediction.ci_95_lower.toFixed(2)} - {currency}
-                {prediction.ci_95_upper.toFixed(2)}
+                {(prediction.ci_95_lower ?? 0).toFixed(2)} - {currency}
+                {(prediction.ci_95_upper ?? 0).toFixed(2)}
               </span>
             </div>
           </div>
