@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import { getLatestPrediction } from '@/lib/api';
 import { formatCurrency, formatPercent, formatDateTime, cn } from '@/lib/utils';
-import type { Prediction, Market } from '@/lib/types';
+import type { Prediction, Market, Interval } from '@/lib/types';
 
 interface PredictionCardProps {
   market: Market;
+  interval?: Interval;
 }
 
-export default function PredictionCard({ market }: PredictionCardProps) {
+export default function PredictionCard({ market, interval }: PredictionCardProps) {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -17,7 +18,7 @@ export default function PredictionCard({ market }: PredictionCardProps) {
     async function fetchPrediction() {
       try {
         setLoading(true);
-        const data = await getLatestPrediction('silver', market);
+        const data = await getLatestPrediction('silver', market, interval);
         setPrediction(data);
       } catch {
         setPrediction(null);
@@ -27,7 +28,7 @@ export default function PredictionCard({ market }: PredictionCardProps) {
     }
 
     fetchPrediction();
-  }, [market]);
+  }, [market, interval]);
 
   const currency = market === 'mcx' ? 'INR' : 'USD';
 
