@@ -393,7 +393,9 @@ class LSTMModel(BaseModel):
 
     def load(self, path: str) -> None:
         """Load model from disk."""
-        data = torch.load(path, map_location=self.device)
+        # Note: weights_only=False is required because we save sklearn scalers
+        # This is safe as we only load our own saved models
+        data = torch.load(path, map_location=self.device, weights_only=False)
 
         self.scaler_X = data["scaler_X"]
         self.scaler_y = data["scaler_y"]
