@@ -5,13 +5,18 @@ Provides historical data and near-real-time quotes.
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for running yfinance synchronous calls
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
 class YahooFinanceError(Exception):
@@ -80,6 +85,32 @@ class YahooFinanceClient:
         """Convert interval to yfinance format."""
         return self.INTERVALS.get(interval.lower(), interval)
 
+    def _fetch_history_sync(
+        self,
+        yf_symbol: str,
+        yf_interval: str,
+        period: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> pd.DataFrame:
+        """Synchronous fetch for running in thread pool."""
+        ticker = yf.Ticker(yf_symbol)
+
+        if period:
+            df = ticker.history(period=period, interval=yf_interval)
+        elif start and end:
+            df = ticker.history(start=start, end=end, interval=yf_interval)
+        elif start:
+            df = ticker.history(start=start, interval=yf_interval)
+        else:
+            # Default to 1 year for daily, 60 days for intraday
+            if yf_interval in ["1d", "1wk", "1mo"]:
+                df = ticker.history(period="1y", interval=yf_interval)
+            else:
+                df = ticker.history(period="60d", interval=yf_interval)
+
+        return df
+
     async def get_historical_data(
         self,
         symbol: str,
@@ -105,20 +136,19 @@ class YahooFinanceClient:
         yf_interval = self._get_interval(interval)
 
         try:
-            ticker = yf.Ticker(yf_symbol)
-
-            if period:
-                df = ticker.history(period=period, interval=yf_interval)
-            elif start and end:
-                df = ticker.history(start=start, end=end, interval=yf_interval)
-            elif start:
-                df = ticker.history(start=start, interval=yf_interval)
-            else:
-                # Default to 1 year for daily, 60 days for intraday
-                if yf_interval in ["1d", "1wk", "1mo"]:
-                    df = ticker.history(period="1y", interval=yf_interval)
-                else:
-                    df = ticker.history(period="60d", interval=yf_interval)
+            # Run synchronous yfinance call in thread pool
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(
+                _executor,
+                partial(
+                    self._fetch_history_sync,
+                    yf_symbol,
+                    yf_interval,
+                    period,
+                    start,
+                    end,
+                ),
+            )
 
             if df.empty:
                 logger.warning(f"No data returned for {yf_symbol}")
@@ -166,6 +196,11 @@ class YahooFinanceClient:
             start=start,
         )
 
+    def _get_ticker_info_sync(self, yf_symbol: str) -> Dict[str, Any]:
+        """Synchronous ticker info fetch for thread pool."""
+        ticker = yf.Ticker(yf_symbol)
+        return ticker.info
+
     async def get_current_price(self, symbol: str) -> Dict[str, Any]:
         """
         Get current price and quote data.
@@ -179,8 +214,12 @@ class YahooFinanceClient:
         yf_symbol = self._get_symbol(symbol)
 
         try:
-            ticker = yf.Ticker(yf_symbol)
-            info = ticker.info
+            # Run synchronous yfinance call in thread pool
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(
+                _executor,
+                partial(self._get_ticker_info_sync, yf_symbol),
+            )
 
             return {
                 "symbol": yf_symbol,
@@ -207,8 +246,11 @@ class YahooFinanceClient:
             Exchange rate as float
         """
         try:
-            ticker = yf.Ticker("USDINR=X")
-            info = ticker.info
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(
+                _executor,
+                partial(self._get_ticker_info_sync, "USDINR=X"),
+            )
             rate = info.get("regularMarketPrice") or info.get("previousClose") or 83.5
             return float(rate)
         except Exception as e:
