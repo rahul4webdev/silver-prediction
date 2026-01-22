@@ -108,7 +108,7 @@ class TickCollector:
             await asyncio.sleep(60)
             return
 
-        access_token = upstox_client._access_token
+        access_token = upstox_client.access_token
 
         # Connect to WebSocket
         headers = {
