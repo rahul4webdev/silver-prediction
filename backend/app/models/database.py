@@ -72,23 +72,49 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """
-    Initialize database - create tables and enable TimescaleDB extension.
+    Initialize database - create tables and optionally enable TimescaleDB extension.
     Should be called once at application startup.
+    TimescaleDB is optional - system works without it (just without time-series optimizations).
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     async with engine.begin() as conn:
-        # Enable TimescaleDB extension
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;"))
+        # Try to enable TimescaleDB extension (optional)
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;"))
+            logger.info("TimescaleDB extension enabled")
+        except Exception as e:
+            logger.warning(f"TimescaleDB not available (optional): {e}")
+            # Continue without TimescaleDB - system will work with regular PostgreSQL
 
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables created successfully")
 
 
 async def create_hypertables() -> None:
     """
     Convert tables to TimescaleDB hypertables for time-series optimization.
     Should be called after init_db().
+    This is optional - if TimescaleDB is not installed, regular PostgreSQL tables are used.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     async with engine.begin() as conn:
+        # Check if TimescaleDB is available
+        try:
+            result = await conn.execute(text(
+                "SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'"
+            ))
+            if not result.scalar():
+                logger.info("TimescaleDB not installed - using regular PostgreSQL tables")
+                return
+        except Exception:
+            logger.info("TimescaleDB not available - using regular PostgreSQL tables")
+            return
+
         # Convert price_data to hypertable
         try:
             await conn.execute(text("""
@@ -99,8 +125,9 @@ async def create_hypertables() -> None:
                     migrate_data => TRUE
                 );
             """))
-        except Exception:
-            pass  # Table might already be a hypertable
+            logger.info("price_data converted to hypertable")
+        except Exception as e:
+            logger.debug(f"price_data hypertable: {e}")
 
         # Convert predictions to hypertable
         try:
@@ -112,8 +139,9 @@ async def create_hypertables() -> None:
                     migrate_data => TRUE
                 );
             """))
-        except Exception:
-            pass
+            logger.info("predictions converted to hypertable")
+        except Exception as e:
+            logger.debug(f"predictions hypertable: {e}")
 
         # Convert market_factors to hypertable
         try:
@@ -125,8 +153,9 @@ async def create_hypertables() -> None:
                     migrate_data => TRUE
                 );
             """))
-        except Exception:
-            pass
+            logger.info("market_factors converted to hypertable")
+        except Exception as e:
+            logger.debug(f"market_factors hypertable: {e}")
 
 
 async def close_db() -> None:
