@@ -131,10 +131,13 @@ class PredictionEngine:
         if len(df) < 100:
             raise ValueError(f"Insufficient data: {len(df)} rows, need at least 100")
 
+        # Drop columns with all NaN values (like open_interest, vwap)
+        df = df.dropna(axis=1, how='all')
+
         # Add technical features
         df = add_technical_features(df)
 
-        # Remove NaN rows from feature calculation
+        # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
 
         # Get current price
@@ -441,8 +444,13 @@ class PredictionEngine:
         if df.empty or len(df) < 500:
             raise ValueError(f"Insufficient data for training: {len(df)} rows")
 
+        # Drop columns with all NaN values (like open_interest, vwap)
+        df = df.dropna(axis=1, how='all')
+
         # Add technical features
         df = add_technical_features(df)
+
+        # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
 
         # Get ensemble and train
