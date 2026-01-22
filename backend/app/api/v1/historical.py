@@ -1,6 +1,6 @@
 """
 Historical data API endpoints.
-Fetches from database or directly from Yahoo Finance as fallback.
+Fetches from database, Upstox (MCX), or Yahoo Finance (COMEX/fallback).
 """
 
 import logging
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import get_db
 from app.models.price_data import PriceData
 from app.services.yahoo_client import yahoo_client
+from app.services.upstox_client import upstox_client, UpstoxAuthError, UpstoxAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +27,45 @@ async def get_live_price(
     market: str = Query("comex", description="Market: mcx or comex"),
 ) -> Dict[str, Any]:
     """
-    Get live/current price from Yahoo Finance.
+    Get live/current price.
 
-    For MCX silver, this first tries Silver Bees ETF (actual INR prices),
-    then falls back to COMEX silver with USD/INR conversion.
+    For MCX silver:
+    1. First tries Upstox (real MCX data) if authenticated
+    2. Falls back to Silver Bees ETF (actual INR prices)
+    3. Finally falls back to COMEX silver with USD/INR conversion
+
+    For COMEX: Uses Yahoo Finance directly.
     """
     try:
-        # For MCX silver, use dedicated method
+        # For MCX silver, try Upstox first for real MCX data
         if market == "mcx" and asset == "silver":
+            # Priority 1: Upstox (real MCX data)
+            if upstox_client.is_authenticated:
+                try:
+                    quote = await upstox_client.get_live_quote()
+                    if quote and quote.get("price"):
+                        return {
+                            "asset": asset,
+                            "market": market,
+                            "symbol": quote.get("symbol"),
+                            "price": quote["price"],
+                            "open": quote.get("open"),
+                            "high": quote.get("high"),
+                            "low": quote.get("low"),
+                            "change": quote.get("change"),
+                            "change_percent": quote.get("change_percent"),
+                            "volume": quote.get("volume"),
+                            "currency": "INR",
+                            "timestamp": datetime.now().isoformat(),
+                            "source": "upstox",
+                            "note": "Real MCX Silver futures data via Upstox API",
+                        }
+                except UpstoxAPIError as e:
+                    logger.warning(f"Upstox quote fetch failed: {e}")
+                except UpstoxAuthError as e:
+                    logger.warning(f"Upstox auth error: {e}")
+
+            # Priority 2: Silver Bees ETF (NSE)
             try:
                 mcx_price = await yahoo_client.get_silver_price_inr()
                 if mcx_price and mcx_price.get("price"):

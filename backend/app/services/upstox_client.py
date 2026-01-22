@@ -12,11 +12,27 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
+import pandas as pd
 
 from app.core.config import settings
 from app.core.constants import UPSTOX_CONFIG
 
 logger = logging.getLogger(__name__)
+
+
+# Interval mapping: our format -> Upstox format
+UPSTOX_INTERVAL_MAP = {
+    "1m": "1minute",
+    "5m": "5minute",
+    "15m": "15minute",
+    "30m": "30minute",
+    "1h": "60minute",
+    "4h": "day",  # Upstox doesn't have 4h, we'll aggregate from daily
+    "1d": "day",
+    "daily": "day",
+    "1wk": "week",
+    "1mo": "month",
+}
 
 
 class UpstoxAuthError(Exception):
@@ -200,11 +216,48 @@ class UpstoxClient:
         if not self._instruments_cache:
             await self.fetch_instruments("MCX")
 
-        # Look for SILVERM (Silver Mini) or SILVER
+        # Look for active SILVERM futures contract
+        silver_futures = []
+        now = datetime.now()
+
+        for key, instrument in self._instruments_cache.items():
+            tradingsymbol = instrument.get("tradingsymbol", "")
+            instrument_type = instrument.get("instrument_type", "")
+
+            # Look for SILVERM (Silver Mini) futures
+            if "SILVERM" in tradingsymbol and instrument_type == "FUT":
+                # Check expiry if available
+                expiry_str = instrument.get("expiry")
+                if expiry_str:
+                    try:
+                        expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                        if expiry > now:
+                            silver_futures.append({
+                                "instrument_key": instrument.get("instrument_key"),
+                                "tradingsymbol": tradingsymbol,
+                                "expiry": expiry,
+                            })
+                    except ValueError:
+                        pass
+                else:
+                    silver_futures.append({
+                        "instrument_key": instrument.get("instrument_key"),
+                        "tradingsymbol": tradingsymbol,
+                        "expiry": None,
+                    })
+
+        # Sort by expiry and return nearest
+        if silver_futures:
+            silver_futures.sort(key=lambda x: x["expiry"] or datetime.max)
+            selected = silver_futures[0]
+            logger.info(f"Selected MCX Silver: {selected['tradingsymbol']} (key: {selected['instrument_key']})")
+            return selected["instrument_key"]
+
+        # Fallback: Look for any SILVER futures
         for key, instrument in self._instruments_cache.items():
             tradingsymbol = instrument.get("tradingsymbol", "")
             if "SILVER" in tradingsymbol and instrument.get("instrument_type") == "FUT":
-                # Return the nearest expiry contract
+                logger.info(f"Fallback MCX Silver: {tradingsymbol}")
                 return instrument.get("instrument_key")
 
         logger.warning("Silver instrument not found in MCX instruments")
@@ -324,6 +377,184 @@ class UpstoxClient:
         all_candles.sort(key=lambda x: x["timestamp"])
 
         return all_candles
+
+    # =========================================================================
+    # HIGH-LEVEL DATA FETCHING (For Data Sync Service)
+    # =========================================================================
+
+    async def get_mcx_silver_data(
+        self,
+        interval: str,
+        start_date: datetime,
+        end_date: Optional[datetime] = None,
+    ) -> pd.DataFrame:
+        """
+        Fetch MCX Silver historical data.
+
+        This is the main method to use for syncing MCX data.
+        It handles instrument key resolution and data fetching.
+
+        Args:
+            interval: Candle interval (30m, 1h, 1d, etc.)
+            start_date: Start date
+            end_date: End date (defaults to now)
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        if not self.is_authenticated:
+            raise UpstoxAuthError("Not authenticated. Please set access token first.")
+
+        # Get silver instrument key
+        instrument_key = await self.get_silver_instrument_key()
+        if not instrument_key:
+            raise UpstoxAPIError("Could not find MCX Silver instrument")
+
+        # Map interval
+        upstox_interval = UPSTOX_INTERVAL_MAP.get(interval, interval)
+        if upstox_interval not in ["1minute", "5minute", "15minute", "30minute", "60minute", "day", "week", "month"]:
+            logger.warning(f"Unknown interval {interval}, defaulting to 30minute")
+            upstox_interval = "30minute"
+
+        end_date = end_date or datetime.now()
+
+        # Calculate days to fetch
+        days = (end_date - start_date).days + 1
+
+        # Check Upstox retention limits
+        retention_days = UPSTOX_CONFIG["retention"].get(upstox_interval.replace("minute", "minute"), 365)
+        if days > retention_days:
+            logger.warning(f"Requested {days} days but Upstox only retains {retention_days} for {upstox_interval}")
+            start_date = end_date - timedelta(days=retention_days - 1)
+
+        # Fetch data in chunks
+        candles = await self.fetch_historical_data_chunked(
+            instrument_key=instrument_key,
+            interval=upstox_interval,
+            days=days,
+            chunk_days=30,
+        )
+
+        if not candles:
+            logger.warning("No MCX silver data returned from Upstox")
+            return pd.DataFrame()
+
+        # Convert to DataFrame
+        df = pd.DataFrame(candles)
+
+        # Ensure proper timestamp format
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+        # Sort by timestamp
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} MCX silver candles from Upstox")
+        return df
+
+    async def get_live_quote(self, instrument_key: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get live quote for MCX Silver.
+
+        Args:
+            instrument_key: Optional instrument key (auto-resolves if not provided)
+
+        Returns:
+            Dict with current price data
+        """
+        if not self.is_authenticated:
+            raise UpstoxAuthError("Not authenticated")
+
+        if not instrument_key:
+            instrument_key = await self.get_silver_instrument_key()
+            if not instrument_key:
+                raise UpstoxAPIError("Could not find MCX Silver instrument")
+
+        client = await self._get_client()
+
+        url = f"{self.BASE_URL}/market-quote/quotes"
+        params = {"instrument_key": instrument_key}
+
+        response = await client.get(
+            url,
+            params=params,
+            headers=self._get_auth_headers(),
+        )
+
+        if response.status_code != 200:
+            raise UpstoxAPIError(f"Quote fetch failed: {response.text}")
+
+        result = response.json()
+        if result.get("status") != "success":
+            raise UpstoxAPIError(f"API error: {result.get('message')}")
+
+        data = result.get("data", {})
+        quote = data.get(instrument_key, {})
+
+        return {
+            "symbol": instrument_key,
+            "price": quote.get("last_price"),
+            "open": quote.get("ohlc", {}).get("open"),
+            "high": quote.get("ohlc", {}).get("high"),
+            "low": quote.get("ohlc", {}).get("low"),
+            "close": quote.get("ohlc", {}).get("close"),
+            "change": quote.get("net_change"),
+            "change_percent": quote.get("percentage_change"),
+            "volume": quote.get("volume"),
+            "timestamp": datetime.now(),
+            "market": "mcx",
+            "currency": "INR",
+        }
+
+    async def verify_authentication(self) -> Dict[str, Any]:
+        """
+        Verify that the access token is valid.
+
+        Returns:
+            Dict with authentication status
+        """
+        if not self.access_token:
+            return {
+                "authenticated": False,
+                "reason": "no_token",
+                "message": "No access token set",
+            }
+
+        try:
+            client = await self._get_client()
+
+            # Try to get profile to verify token
+            response = await client.get(
+                f"{self.BASE_URL}/user/profile",
+                headers=self._get_auth_headers(),
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "authenticated": True,
+                    "user": data.get("data", {}),
+                    "message": "Token is valid",
+                }
+            elif response.status_code == 401:
+                return {
+                    "authenticated": False,
+                    "reason": "token_expired",
+                    "message": "Access token has expired. Need to re-authenticate.",
+                }
+            else:
+                return {
+                    "authenticated": False,
+                    "reason": "unknown",
+                    "message": f"API returned status {response.status_code}",
+                }
+
+        except Exception as e:
+            return {
+                "authenticated": False,
+                "reason": "error",
+                "message": str(e),
+            }
 
     # =========================================================================
     # WEBSOCKET STREAMING

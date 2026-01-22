@@ -51,10 +51,24 @@ class DataSyncService:
         logger.info(f"Syncing MCX {asset} {interval} data...")
 
         try:
-            # Check if we need to authenticate
+            # Verify Upstox authentication
             if not upstox_client.is_authenticated:
-                logger.warning("Upstox not authenticated, skipping MCX sync")
-                return {"status": "skipped", "reason": "not_authenticated"}
+                logger.warning("Upstox not authenticated - no access token set")
+                return {
+                    "status": "skipped",
+                    "reason": "not_authenticated",
+                    "message": "Set UPSTOX_ACCESS_TOKEN in environment or authenticate via OAuth",
+                }
+
+            # Verify the token is actually valid
+            auth_status = await upstox_client.verify_authentication()
+            if not auth_status.get("authenticated"):
+                logger.warning(f"Upstox authentication invalid: {auth_status.get('message')}")
+                return {
+                    "status": "skipped",
+                    "reason": auth_status.get("reason", "auth_failed"),
+                    "message": auth_status.get("message"),
+                }
 
             # Get the latest timestamp we have
             latest = await self._get_latest_timestamp(db, asset, "mcx", interval)
@@ -65,13 +79,21 @@ class DataSyncService:
             else:
                 start_date = datetime.now() - timedelta(days=days)
 
-            # Fetch from Upstox
-            df = await upstox_client.get_historical_candles(
-                symbol=asset,
-                interval=interval,
-                start_date=start_date,
-                end_date=datetime.now(),
-            )
+            # Only proceed if we need data
+            if latest and start_date > datetime.now():
+                logger.info("MCX data is already up to date")
+                return {"status": "success", "records": 0, "message": "Already up to date"}
+
+            # Fetch from Upstox using the proper method
+            if asset.lower() == "silver":
+                df = await upstox_client.get_mcx_silver_data(
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=datetime.now(),
+                )
+            else:
+                logger.warning(f"Asset {asset} not yet supported for MCX sync")
+                return {"status": "skipped", "reason": f"Asset {asset} not supported"}
 
             if df.empty:
                 logger.info("No new MCX data to sync")
@@ -82,11 +104,15 @@ class DataSyncService:
                 db, df, asset, "mcx", interval
             )
 
-            logger.info(f"Synced {records_inserted} MCX records")
-            return {"status": "success", "records": records_inserted}
+            logger.info(f"Synced {records_inserted} MCX records from Upstox")
+            return {
+                "status": "success",
+                "records": records_inserted,
+                "source": "upstox",
+            }
 
         except Exception as e:
-            logger.error(f"MCX sync failed: {e}")
+            logger.error(f"MCX sync failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
 
     async def sync_comex_data(

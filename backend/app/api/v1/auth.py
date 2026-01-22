@@ -23,24 +23,43 @@ async def get_auth_status() -> Dict[str, Any]:
     Check Upstox authentication status.
 
     Returns whether Upstox API is configured and authenticated.
+    Also verifies if the token is actually valid by making a test API call.
     """
     has_api_key = bool(settings.upstox_api_key)
     has_api_secret = bool(settings.upstox_api_secret)
     has_access_token = upstox_client.is_authenticated
 
+    # Verify the token is actually valid if we have one
+    token_valid = False
+    token_status = None
+    user_info = None
+
+    if has_access_token:
+        verification = await upstox_client.verify_authentication()
+        token_valid = verification.get("authenticated", False)
+        token_status = verification.get("reason", "valid" if token_valid else "invalid")
+        user_info = verification.get("user")
+
     return {
         "upstox": {
             "configured": has_api_key and has_api_secret,
-            "authenticated": has_access_token,
+            "authenticated": has_access_token and token_valid,
             "api_key_set": has_api_key,
             "api_secret_set": has_api_secret,
             "access_token_set": has_access_token,
+            "token_valid": token_valid,
+            "token_status": token_status,
+            "user": user_info,
         },
-        "mcx_data_source": "upstox" if has_access_token else "yahoo_finance_proxy",
+        "mcx_data_source": "upstox" if (has_access_token and token_valid) else "yahoo_finance_proxy",
         "message": (
             "Upstox authenticated - real MCX data available"
-            if has_access_token
-            else "Using Yahoo Finance Silver Bees ETF as MCX proxy. Configure Upstox for real MCX data."
+            if (has_access_token and token_valid)
+            else (
+                "Token expired - need to re-authenticate with Upstox"
+                if has_access_token and not token_valid
+                else "Using Yahoo Finance Silver Bees ETF as MCX proxy. Configure Upstox for real MCX data."
+            )
         ),
     }
 
