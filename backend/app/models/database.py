@@ -79,16 +79,18 @@ async def init_db() -> None:
     import logging
     logger = logging.getLogger(__name__)
 
-    async with engine.begin() as conn:
-        # Try to enable TimescaleDB extension (optional)
-        try:
+    # Try to enable TimescaleDB extension in a separate connection (optional)
+    # This needs to be in its own transaction since it may fail
+    try:
+        async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;"))
             logger.info("TimescaleDB extension enabled")
-        except Exception as e:
-            logger.warning(f"TimescaleDB not available (optional): {e}")
-            # Continue without TimescaleDB - system will work with regular PostgreSQL
+    except Exception as e:
+        logger.warning(f"TimescaleDB not available (optional): {e}")
+        # Continue without TimescaleDB - system will work with regular PostgreSQL
 
-        # Create all tables
+    # Create all tables in a new transaction
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created successfully")
 
