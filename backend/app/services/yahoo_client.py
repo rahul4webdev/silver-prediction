@@ -32,9 +32,15 @@ class YahooFinanceClient:
 
     # Symbol mappings
     SYMBOLS = {
-        # Precious metals
-        "silver": "SI=F",       # Silver Futures
-        "gold": "GC=F",         # Gold Futures
+        # Precious metals - International
+        "silver": "SI=F",       # Silver Futures (COMEX)
+        "gold": "GC=F",         # Gold Futures (COMEX)
+
+        # Indian Silver/Gold ETFs (MCX proxy)
+        "silver_mcx": "SILVERBEES.NS",  # Nippon India Silver ETF
+        "silver_etf": "SILVERBEES.NS",  # Alias
+        "gold_mcx": "GOLDBEES.NS",      # Nippon India Gold ETF
+        "gold_etf": "GOLDBEES.NS",      # Alias
 
         # Correlated factors
         "dxy": "DX-Y.NYB",      # US Dollar Index
@@ -43,6 +49,9 @@ class YahooFinanceClient:
         "copper": "HG=F",       # Copper Futures
         "spx": "^GSPC",         # S&P 500
         "crude": "CL=F",        # Crude Oil
+
+        # Currency
+        "usdinr": "USDINR=X",   # USD/INR Exchange Rate
     }
 
     # Interval mappings (yfinance format)
@@ -189,6 +198,106 @@ class YahooFinanceClient:
         except Exception as e:
             logger.error(f"Error fetching price for {yf_symbol}: {e}")
             raise YahooFinanceError(f"Failed to fetch price: {e}")
+
+    async def get_usdinr_rate(self) -> float:
+        """
+        Get current USD/INR exchange rate.
+
+        Returns:
+            Exchange rate as float
+        """
+        try:
+            ticker = yf.Ticker("USDINR=X")
+            info = ticker.info
+            rate = info.get("regularMarketPrice") or info.get("previousClose") or 83.5
+            return float(rate)
+        except Exception as e:
+            logger.warning(f"Failed to fetch USD/INR rate: {e}, using default 83.5")
+            return 83.5
+
+    async def get_silver_mcx(
+        self,
+        interval: str = "30m",
+        days: int = 60,
+    ) -> pd.DataFrame:
+        """
+        Fetch MCX Silver data using Silver Bees ETF as proxy.
+
+        This uses SILVERBEES.NS (Nippon India Silver ETF) from NSE
+        which closely tracks MCX silver prices.
+
+        Args:
+            interval: Candle interval
+            days: Number of days of history
+
+        Returns:
+            DataFrame with silver OHLCV data in INR
+        """
+        start = datetime.now() - timedelta(days=days)
+        return await self.get_historical_data(
+            symbol="silver_mcx",
+            interval=interval,
+            start=start,
+        )
+
+    async def get_silver_price_inr(self) -> Dict[str, Any]:
+        """
+        Get current silver price in INR.
+
+        First tries Silver Bees ETF, then falls back to
+        COMEX silver with USD/INR conversion.
+
+        Returns:
+            Dict with silver price data in INR
+        """
+        # Try Silver Bees ETF first (actual INR price)
+        try:
+            etf_price = await self.get_current_price("silver_mcx")
+            if etf_price and etf_price.get("price"):
+                # Silver Bees is per gram, convert to per kg for MCX equivalent
+                # Note: Silver Bees tracks 1 gram of silver
+                price_per_gram = etf_price["price"]
+                price_per_kg = price_per_gram * 1000
+
+                return {
+                    "symbol": "SILVERBEES.NS",
+                    "price": price_per_kg,
+                    "price_per_gram": price_per_gram,
+                    "currency": "INR",
+                    "source": "silver_bees_etf",
+                    "change": etf_price.get("change"),
+                    "change_percent": etf_price.get("change_percent"),
+                    "timestamp": datetime.now(),
+                }
+        except Exception as e:
+            logger.warning(f"Silver Bees fetch failed: {e}")
+
+        # Fallback to COMEX + USD/INR conversion
+        try:
+            comex_price = await self.get_current_price("silver")
+            usd_inr = await self.get_usdinr_rate()
+
+            if comex_price and comex_price.get("price"):
+                # COMEX silver is per troy ounce, convert to per kg
+                # 1 troy ounce = 31.1035 grams
+                # 1 kg = 1000 grams = 32.1507 troy ounces
+                price_per_oz_usd = comex_price["price"]
+                price_per_kg_inr = price_per_oz_usd * 32.1507 * usd_inr
+
+                return {
+                    "symbol": "SI=F",
+                    "price": round(price_per_kg_inr, 2),
+                    "price_per_oz_usd": price_per_oz_usd,
+                    "usd_inr_rate": usd_inr,
+                    "currency": "INR",
+                    "source": "comex_converted",
+                    "change": comex_price.get("change"),
+                    "change_percent": comex_price.get("change_percent"),
+                    "timestamp": datetime.now(),
+                }
+        except Exception as e:
+            logger.error(f"COMEX fallback failed: {e}")
+            raise YahooFinanceError(f"Failed to fetch silver price: {e}")
 
     async def get_multiple_symbols(
         self,

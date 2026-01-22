@@ -84,33 +84,65 @@ async def get_historical_data(
             else:
                 period = "1y"
 
-            # Fetch from Yahoo Finance
-            df = await yahoo_client.get_historical_data(
-                symbol=asset,
-                interval=interval,
-                period=period,
-            )
+            # For MCX, try Silver Bees ETF first (actual INR prices)
+            if market == "mcx" and asset == "silver":
+                try:
+                    df = await yahoo_client.get_silver_mcx(interval=interval, days=60)
+                    if not df.empty:
+                        raw_candles = yahoo_client.convert_to_candles(df)
+                        # Silver Bees is per gram, convert to per kg for MCX-like prices
+                        for candle in raw_candles:
+                            if candle.get("open"):
+                                candle["open"] = round(candle["open"] * 1000, 2)
+                            if candle.get("high"):
+                                candle["high"] = round(candle["high"] * 1000, 2)
+                            if candle.get("low"):
+                                candle["low"] = round(candle["low"] * 1000, 2)
+                            if candle.get("close"):
+                                candle["close"] = round(candle["close"] * 1000, 2)
+                        candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
+                        data_source = "silver_bees_etf"
+                except Exception as e:
+                    logger.warning(f"Silver Bees fetch failed, falling back to COMEX conversion: {e}")
 
-            if not df.empty:
-                # Convert to candle format
-                raw_candles = yahoo_client.convert_to_candles(df)
+            # If MCX data not available or for COMEX, use standard approach
+            if not candles:
+                df = await yahoo_client.get_historical_data(
+                    symbol=asset,
+                    interval=interval,
+                    period=period,
+                )
 
-                # For MCX, convert USD to INR (approximate rate)
-                if market == "mcx":
-                    USD_TO_INR = 83.5  # Approximate conversion rate
-                    for candle in raw_candles:
-                        if candle.get("open"):
-                            candle["open"] = round(candle["open"] * USD_TO_INR, 2)
-                        if candle.get("high"):
-                            candle["high"] = round(candle["high"] * USD_TO_INR, 2)
-                        if candle.get("low"):
-                            candle["low"] = round(candle["low"] * USD_TO_INR, 2)
-                        if candle.get("close"):
-                            candle["close"] = round(candle["close"] * USD_TO_INR, 2)
+                if not df.empty:
+                    # Convert to candle format
+                    raw_candles = yahoo_client.convert_to_candles(df)
 
-                # Limit and sort
-                candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
-                data_source = "yahoo_finance"
+                    # For MCX, convert USD to INR with live rate
+                    if market == "mcx":
+                        try:
+                            USD_TO_INR = await yahoo_client.get_usdinr_rate()
+                        except Exception:
+                            USD_TO_INR = 83.5  # Fallback rate
+
+                        # COMEX is per troy ounce, convert to per kg for MCX
+                        # 1 kg = 32.1507 troy ounces
+                        conversion = USD_TO_INR * 32.1507
+
+                        for candle in raw_candles:
+                            if candle.get("open"):
+                                candle["open"] = round(candle["open"] * conversion, 2)
+                            if candle.get("high"):
+                                candle["high"] = round(candle["high"] * conversion, 2)
+                            if candle.get("low"):
+                                candle["low"] = round(candle["low"] * conversion, 2)
+                            if candle.get("close"):
+                                candle["close"] = round(candle["close"] * conversion, 2)
+                        data_source = "comex_converted"
+                    else:
+                        data_source = "yahoo_finance"
+
+                    # Limit and sort
+                    candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
 
         except Exception as e:
             logger.error(f"Yahoo Finance fetch failed: {e}")
@@ -173,6 +205,28 @@ async def get_latest_price(
     # Fallback to Yahoo Finance for live price
     try:
         logger.info(f"Fetching latest price for {asset} from Yahoo Finance...")
+
+        # For MCX silver, use dedicated method that tries Silver Bees first
+        if market == "mcx" and asset == "silver":
+            try:
+                mcx_price = await yahoo_client.get_silver_price_inr()
+                if mcx_price and mcx_price.get("price"):
+                    return {
+                        "asset": asset,
+                        "market": market,
+                        "interval": interval,
+                        "timestamp": mcx_price.get("timestamp", datetime.now()).isoformat(),
+                        "price": mcx_price["price"],
+                        "close": mcx_price["price"],
+                        "currency": "INR",
+                        "change": mcx_price.get("change"),
+                        "change_percent": mcx_price.get("change_percent"),
+                        "source": mcx_price.get("source", "yahoo_finance"),
+                    }
+            except Exception as e:
+                logger.warning(f"MCX silver price fetch failed: {e}")
+
+        # Standard approach for COMEX or fallback
         price_info = await yahoo_client.get_current_price(asset)
 
         if price_info and price_info.get("price"):
@@ -183,11 +237,16 @@ async def get_latest_price(
 
             # Convert to INR for MCX
             if market == "mcx":
-                USD_TO_INR = 83.5
-                price = round(price * USD_TO_INR, 2)
-                high = round(high * USD_TO_INR, 2)
-                low = round(low * USD_TO_INR, 2)
-                open_price = round(open_price * USD_TO_INR, 2)
+                try:
+                    USD_TO_INR = await yahoo_client.get_usdinr_rate()
+                except Exception:
+                    USD_TO_INR = 83.5
+                # Convert per oz to per kg
+                conversion = USD_TO_INR * 32.1507
+                price = round(price * conversion, 2)
+                high = round(high * conversion, 2)
+                low = round(low * conversion, 2)
+                open_price = round(open_price * conversion, 2)
 
             return {
                 "asset": asset,
@@ -201,7 +260,7 @@ async def get_latest_price(
                 "volume": price_info.get("volume", 0),
                 "change": price_info.get("change"),
                 "change_percent": price_info.get("change_percent"),
-                "source": "yahoo_finance",
+                "source": "comex_converted" if market == "mcx" else "yahoo_finance",
             }
     except Exception as e:
         logger.error(f"Yahoo Finance fetch failed: {e}")
@@ -415,9 +474,32 @@ async def get_live_price(
     """
     Get live/current price from Yahoo Finance.
 
-    This endpoint always fetches fresh data from Yahoo Finance.
+    For MCX silver, this first tries Silver Bees ETF (actual INR prices),
+    then falls back to COMEX silver with USD/INR conversion.
     """
     try:
+        # For MCX silver, use dedicated method
+        if market == "mcx" and asset == "silver":
+            try:
+                mcx_price = await yahoo_client.get_silver_price_inr()
+                if mcx_price and mcx_price.get("price"):
+                    return {
+                        "asset": asset,
+                        "market": market,
+                        "symbol": mcx_price.get("symbol"),
+                        "price": mcx_price["price"],
+                        "price_per_gram": mcx_price.get("price_per_gram"),
+                        "currency": "INR",
+                        "change": mcx_price.get("change"),
+                        "change_percent": mcx_price.get("change_percent"),
+                        "timestamp": datetime.now().isoformat(),
+                        "source": mcx_price.get("source", "yahoo_finance"),
+                        "note": "Price per kg. Silver Bees ETF is used as MCX proxy.",
+                    }
+            except Exception as e:
+                logger.warning(f"MCX silver price fetch failed: {e}")
+
+        # Standard approach for COMEX or fallback
         price_info = await yahoo_client.get_current_price(asset)
 
         if not price_info or not price_info.get("price"):
@@ -435,18 +517,25 @@ async def get_live_price(
         low = price_info.get("low") or price
         open_price = price_info.get("open") or price
         prev_close = price_info.get("previous_close")
+        source = "yahoo_finance"
 
         # Convert to INR for MCX
         if market == "mcx":
-            USD_TO_INR = 83.5
-            price = round(price * USD_TO_INR, 2)
-            high = round(high * USD_TO_INR, 2)
-            low = round(low * USD_TO_INR, 2)
-            open_price = round(open_price * USD_TO_INR, 2)
+            try:
+                USD_TO_INR = await yahoo_client.get_usdinr_rate()
+            except Exception:
+                USD_TO_INR = 83.5
+            # Convert per oz to per kg: 1 kg = 32.1507 troy oz
+            conversion = USD_TO_INR * 32.1507
+            price = round(price * conversion, 2)
+            high = round(high * conversion, 2)
+            low = round(low * conversion, 2)
+            open_price = round(open_price * conversion, 2)
             if prev_close:
-                prev_close = round(prev_close * USD_TO_INR, 2)
+                prev_close = round(prev_close * conversion, 2)
             if change:
-                change = round(change * USD_TO_INR, 2)
+                change = round(change * conversion, 2)
+            source = "comex_converted"
 
         return {
             "asset": asset,
@@ -461,7 +550,8 @@ async def get_live_price(
             "change_percent": change_percent,
             "volume": price_info.get("volume"),
             "timestamp": datetime.now().isoformat(),
-            "source": "yahoo_finance",
+            "source": source,
+            "currency": "INR" if market == "mcx" else "USD",
         }
     except Exception as e:
         logger.error(f"Live price fetch failed: {e}")
