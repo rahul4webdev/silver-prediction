@@ -187,11 +187,13 @@ class LSTMModel(BaseModel):
         features_scaled = self.scaler_X.fit_transform(features)
 
         # Create sequences
-        # X[i] = features[i-seq_len:i], y[i] = return[i]
+        # X[i] = features up to time i (history), y[i] = NEXT period's return
+        # target_returns[i] = (Price[i+1] - Price[i]) / Price[i]
+        # So to predict next return, we use features[0:i] to predict target_returns[i]
         X, y = [], []
-        for i in range(self.sequence_length, len(features_scaled)):
+        for i in range(self.sequence_length, len(features_scaled) - 1):  # -1 to leave room for target
             X.append(features_scaled[i - self.sequence_length:i])
-            y.append(target_returns[i - 1])  # -1 because returns array is one shorter
+            y.append(target_returns[i])  # Next period's return (from period i to i+1)
 
         return np.array(X), np.array(y), last_price
 
