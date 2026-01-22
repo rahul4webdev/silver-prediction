@@ -4,7 +4,7 @@ Syncs data from Upstox (MCX) and Yahoo Finance (COMEX).
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.price_data import PriceData
 from app.services.upstox_client import upstox_client
 from app.services.yahoo_client import yahoo_client
+
+
+def utc_now() -> datetime:
+    """Get current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 logger = logging.getLogger(__name__)
 
@@ -73,15 +78,19 @@ class DataSyncService:
 
             # Get the latest timestamp we have
             latest = await self._get_latest_timestamp(db, asset, "mcx", interval)
+            now = utc_now()
 
             # Determine start date
             if latest:
+                # Ensure latest is timezone-aware
+                if latest.tzinfo is None:
+                    latest = latest.replace(tzinfo=timezone.utc)
                 start_date = latest + timedelta(minutes=1)
             else:
-                start_date = datetime.now() - timedelta(days=days)
+                start_date = now - timedelta(days=days)
 
             # Only proceed if we need data
-            if latest and start_date > datetime.now():
+            if latest and start_date > now:
                 logger.info("MCX data is already up to date")
                 return {"status": "success", "records": 0, "message": "Already up to date"}
 
@@ -90,7 +99,7 @@ class DataSyncService:
                 df = await upstox_client.get_mcx_silver_data(
                     interval=interval,
                     start_date=start_date,
-                    end_date=datetime.now(),
+                    end_date=now,
                 )
             else:
                 logger.warning(f"Asset {asset} not yet supported for MCX sync")
@@ -140,19 +149,23 @@ class DataSyncService:
         try:
             # Get the latest timestamp we have
             latest = await self._get_latest_timestamp(db, asset, "comex", interval)
+            now = utc_now()
 
             # Determine start date
             if latest:
+                # Ensure latest is timezone-aware
+                if latest.tzinfo is None:
+                    latest = latest.replace(tzinfo=timezone.utc)
                 start_date = latest + timedelta(minutes=1)
             else:
-                start_date = datetime.now() - timedelta(days=days)
+                start_date = now - timedelta(days=days)
 
             # Fetch from Yahoo Finance
             df = await yahoo_client.get_historical_data(
                 symbol=asset,
                 interval=interval,
                 start=start_date,
-                end=datetime.now(),
+                end=now,
             )
 
             if df.empty:
