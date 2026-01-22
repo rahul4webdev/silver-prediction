@@ -77,6 +77,21 @@ export async function getPredictionHistory(
   }
 }
 
+export async function getPredictions(
+  asset: string = 'silver',
+  market?: string,
+  limit: number = 50
+): Promise<Prediction[]> {
+  const params = new URLSearchParams({ asset, limit: limit.toString() });
+  if (market) params.set('market', market);
+  try {
+    const data = await fetchAPI<{ total: number; predictions: Prediction[] }>(`/predictions/history?${params}`);
+    return data.predictions || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getAccuracySummary(
   asset: string = 'silver',
   periodDays: number = 30
