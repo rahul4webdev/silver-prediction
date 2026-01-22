@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, desc, func
+from sqlalchemy import select, and_, desc, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
@@ -556,6 +556,7 @@ async def sync_historical_data(
 @router.post("/sync-all")
 async def sync_all_data(
     days: int = Query(60, le=730, description="Days of history to sync (max 2 years)"),
+    force: bool = Query(False, description="Force full re-sync by clearing existing data first"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -563,11 +564,29 @@ async def sync_all_data(
 
     This is useful for initial data loading.
     Note: Upstox provides ~1 year of 30m data, Yahoo Finance provides more for COMEX.
+
+    Use force=true to clear existing data and re-sync from scratch.
     """
     from app.services.data_sync import data_sync_service
 
     results = {}
     intervals = ["30m", "1h", "4h", "1d"]
+
+    # If force=true, clear existing data first
+    if force:
+        try:
+            for market in ["comex", "mcx"]:
+                for interval in intervals:
+                    await db.execute(
+                        text("DELETE FROM price_data WHERE asset = :asset AND market = :market AND interval = :interval"),
+                        {"asset": "silver", "market": market, "interval": interval}
+                    )
+            await db.commit()
+            results["cleared"] = True
+            logger.info("Cleared existing price data for force re-sync")
+        except Exception as e:
+            logger.error(f"Failed to clear data: {e}")
+            results["cleared"] = False
 
     for market in ["comex", "mcx"]:
         for interval in intervals:
@@ -589,6 +608,7 @@ async def sync_all_data(
     return {
         "status": "complete",
         "days": days,
+        "force": force,
         "results": results,
     }
 
