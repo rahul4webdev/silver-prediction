@@ -20,6 +20,13 @@ from app.models.database import async_session_factory
 from app.models.tick_data import TickData, TickDataAggregated
 from app.services.upstox_client import upstox_client
 
+# Import protobuf for decoding Upstox messages
+try:
+    from app.services.proto import MarketDataFeed_pb2 as pb
+    PROTOBUF_AVAILABLE = True
+except ImportError:
+    PROTOBUF_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,13 +184,18 @@ class TickCollector:
         await ws.send(json.dumps(subscribe_message))
         logger.info(f"Subscribed to {self._instrument_key}")
 
-    async def _process_message(self, message: str) -> None:
-        """Process incoming WebSocket message."""
+    async def _process_message(self, message) -> None:
+        """Process incoming WebSocket message (protobuf or JSON)."""
+        # Handle binary protobuf messages
+        if isinstance(message, bytes):
+            await self._process_protobuf_message(message)
+            return
+
+        # Handle JSON messages (fallback)
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
-            # Binary message - Upstox sends protobuf, but we'll handle JSON
-            logger.debug("Received binary message, skipping")
+            logger.debug("Received undecodable message, skipping")
             return
 
         # Check if it's market data
@@ -195,6 +207,96 @@ class TickCollector:
                     await self._process_full_feed(instrument_key, feed_data["ff"])
                 elif "ltpc" in feed_data:  # LTP change feed
                     await self._process_ltpc_feed(instrument_key, feed_data["ltpc"])
+
+    async def _process_protobuf_message(self, data: bytes) -> None:
+        """Process protobuf-encoded message from Upstox."""
+        if not PROTOBUF_AVAILABLE:
+            logger.warning("Protobuf not available, cannot decode message")
+            return
+
+        try:
+            feed_response = pb.FeedResponse()
+            feed_response.ParseFromString(data)
+
+            # Check message type
+            msg_type = feed_response.type
+            # Type 0 = initial_feed, 1 = live_feed, 2 = market_info
+
+            if msg_type == 1:  # live_feed
+                for instrument_key, feed in feed_response.feeds.items():
+                    await self._process_protobuf_feed(instrument_key, feed)
+            elif msg_type == 0:  # initial_feed (snapshot)
+                for instrument_key, feed in feed_response.feeds.items():
+                    await self._process_protobuf_feed(instrument_key, feed)
+            # Type 2 (market_info) contains market status, we can log it
+            elif msg_type == 2:
+                logger.debug(f"Market info received: {feed_response.marketInfo}")
+
+        except Exception as e:
+            logger.error(f"Failed to decode protobuf message: {e}")
+            self._stats["errors"] += 1
+
+    async def _process_protobuf_feed(self, instrument_key: str, feed) -> None:
+        """Process a single feed from protobuf message."""
+        self._stats["ticks_received"] += 1
+        self._stats["last_tick_time"] = datetime.now(timezone.utc)
+
+        # Extract data based on feed type
+        ltpc = None
+        ohlc_data = None
+        volume = None
+        oi = None
+
+        # Check which feed type we have
+        if feed.HasField("fullFeed"):
+            full_feed = feed.fullFeed
+            if full_feed.HasField("marketFF"):
+                market_ff = full_feed.marketFF
+                ltpc = market_ff.ltpc
+                volume = market_ff.vtt  # Volume traded today
+                oi = market_ff.oi  # Open interest
+
+                # Get OHLC from marketOHLC
+                if market_ff.marketOHLC and market_ff.marketOHLC.ohlc:
+                    for ohlc in market_ff.marketOHLC.ohlc:
+                        if ohlc.interval == "I1":  # Intraday
+                            ohlc_data = ohlc
+                            break
+        elif feed.HasField("ltpc"):
+            ltpc = feed.ltpc
+
+        if ltpc is None:
+            return
+
+        # Create tick record
+        tick = {
+            "asset": "silver",
+            "market": "mcx",
+            "symbol": instrument_key,
+            "timestamp": datetime.now(timezone.utc),
+            "ltp": ltpc.ltp if ltpc.ltp else None,
+            "ltq": ltpc.ltq if ltpc.ltq else None,
+            "open": ohlc_data.open if ohlc_data else None,
+            "high": ohlc_data.high if ohlc_data else None,
+            "low": ohlc_data.low if ohlc_data else None,
+            "close": ohlc_data.close if ohlc_data else (ltpc.ltp if ltpc.ltp else None),
+            "volume": volume,
+            "oi": int(oi) if oi else None,
+            "bid_price": None,
+            "bid_qty": None,
+            "ask_price": None,
+            "ask_qty": None,
+            "change": ltpc.cp if ltpc.cp else None,  # Close price (previous day)
+            "change_percent": None,
+            "source": "upstox_ws",
+            "created_at": datetime.now(timezone.utc),
+        }
+
+        self._tick_buffer.append(tick)
+
+        # Log periodically
+        if self._stats["ticks_received"] % 100 == 0:
+            logger.info(f"Received {self._stats['ticks_received']} ticks, LTP: {ltpc.ltp}")
 
     async def _process_full_feed(self, instrument_key: str, feed: Dict) -> None:
         """Process full market data feed."""
