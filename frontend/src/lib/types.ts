@@ -40,6 +40,28 @@ export interface HistoricalData {
   message?: string;
 }
 
+export interface ConfidenceInterval {
+  lower: number;
+  upper: number;
+}
+
+export interface ConfidenceIntervals {
+  ci_50: ConfidenceInterval;
+  ci_80: ConfidenceInterval;
+  ci_95: ConfidenceInterval;
+}
+
+export interface PredictionVerification {
+  actual_price: number;
+  is_direction_correct: boolean;
+  price_error: number;
+  price_error_percent: number;
+  within_ci_50: boolean;
+  within_ci_80: boolean;
+  within_ci_95: boolean;
+  verified_at: string;
+}
+
 export interface Prediction {
   id?: string;
   created_at?: string;
@@ -52,16 +74,10 @@ export interface Prediction {
   predicted_price: number;
   predicted_direction: 'bullish' | 'bearish' | 'neutral';
   direction_confidence: number;
-  ci_50_lower?: number;
-  ci_50_upper?: number;
-  ci_80_lower?: number;
-  ci_80_upper?: number;
-  ci_95_lower?: number;
-  ci_95_upper?: number;
+  confidence_intervals: ConfidenceIntervals;
   model_weights?: Record<string, number>;
-  actual_price?: number | null;
-  is_direction_correct?: boolean | null;
-  verified_at?: string | null;
+  model_version?: string | null;
+  verification: PredictionVerification | null;
 }
 
 export interface AccuracySummary {

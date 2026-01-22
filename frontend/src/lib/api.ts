@@ -90,10 +90,12 @@ export async function getPredictionHistory(
 export async function getPredictions(
   asset: string = 'silver',
   market?: string,
-  limit: number = 50
+  interval?: string,
+  limit: number = 100
 ): Promise<Prediction[]> {
   const params = new URLSearchParams({ asset, limit: limit.toString() });
   if (market) params.set('market', market);
+  if (interval && interval !== 'all') params.set('interval', interval);
   try {
     const data = await fetchAPI<{ total: number; predictions: Prediction[] }>(`/predictions/history?${params}`);
     return data.predictions || [];
