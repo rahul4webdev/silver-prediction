@@ -181,8 +181,10 @@ class TickCollector:
             },
         }
 
-        await ws.send(json.dumps(subscribe_message))
-        logger.info(f"Subscribed to {self._instrument_key}")
+        # Send as binary (bytes) as required by Upstox v3 WebSocket
+        message_bytes = json.dumps(subscribe_message).encode('utf-8')
+        await ws.send(message_bytes)
+        logger.info(f"Subscribed to {self._instrument_key} (binary message)")
 
     async def _process_message(self, message) -> None:
         """Process incoming WebSocket message (protobuf or JSON)."""
