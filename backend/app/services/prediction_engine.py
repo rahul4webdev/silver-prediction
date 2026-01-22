@@ -140,9 +140,12 @@ class PredictionEngine:
         # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
 
-        # Get current price
+        # Get current price (latest from data)
         current_price = float(df["close"].iloc[-1])
-        current_time = pd.to_datetime(df["timestamp"].iloc[-1])
+
+        # Use actual current time for prediction, not data timestamp
+        # This ensures target_time is always in the future
+        prediction_time = datetime.now()
 
         # Get ensemble and predict
         ensemble = self.get_ensemble(interval)
@@ -153,16 +156,16 @@ class PredictionEngine:
         prediction_result = ensemble.predict(df, horizon, current_price)
         ensemble_pred = prediction_result["ensemble"]
 
-        # Calculate target time
+        # Calculate target time from NOW (when prediction is made)
         interval_minutes = INTERVAL_CONFIGS[PredictionInterval(interval)].minutes
-        target_time = current_time + timedelta(minutes=interval_minutes * horizon)
+        target_time = prediction_time + timedelta(minutes=interval_minutes * horizon)
 
         # Create prediction record
         prediction = Prediction(
             asset=asset,
             market=market,
             interval=interval,
-            prediction_time=datetime.now(),
+            prediction_time=prediction_time,
             target_time=target_time,
             current_price=Decimal(str(current_price)),
             predicted_price=Decimal(str(ensemble_pred["predicted_price"])),

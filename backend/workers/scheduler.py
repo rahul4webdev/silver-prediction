@@ -79,12 +79,39 @@ class SchedulerWorker:
             replace_existing=True,
         )
 
-        # Schedule prediction generation every 30 minutes
+        # Schedule 30-minute predictions every 30 minutes (at :00 and :30)
         self.scheduler.add_job(
-            self.generate_predictions,
+            self.generate_30m_predictions,
             CronTrigger(minute="0,30"),
-            id="generate_predictions",
-            name="Generate predictions",
+            id="generate_30m_predictions",
+            name="Generate 30-minute predictions",
+            replace_existing=True,
+        )
+
+        # Schedule 1-hour predictions every hour (at :00)
+        self.scheduler.add_job(
+            self.generate_1h_predictions,
+            CronTrigger(minute="0"),
+            id="generate_1h_predictions",
+            name="Generate 1-hour predictions",
+            replace_existing=True,
+        )
+
+        # Schedule 4-hour predictions every 4 hours (at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+        self.scheduler.add_job(
+            self.generate_4h_predictions,
+            CronTrigger(hour="0,4,8,12,16,20", minute="0"),
+            id="generate_4h_predictions",
+            name="Generate 4-hour predictions",
+            replace_existing=True,
+        )
+
+        # Schedule daily predictions once per day at market open (3:30 UTC = 9:00 AM IST)
+        self.scheduler.add_job(
+            self.generate_daily_predictions,
+            CronTrigger(hour="3", minute="30"),
+            id="generate_daily_predictions",
+            name="Generate daily predictions",
             replace_existing=True,
         )
 
@@ -178,38 +205,54 @@ class SchedulerWorker:
             logger.error(f"Model training failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def generate_predictions(self):
-        """Generate predictions for all intervals."""
-        logger.info("Starting scheduled prediction generation...")
+    async def _generate_predictions_for_interval(self, interval: str):
+        """Generate predictions for a specific interval for both markets."""
+        logger.info(f"Generating {interval} predictions...")
 
         try:
             async with await self.get_session() as db:
                 results = {}
 
-                for market in ["comex", "mcx"]:
-                    for interval in ["30m", "1h"]:
-                        try:
-                            prediction = await prediction_engine.generate_prediction(
-                                db, "silver", market, interval
-                            )
-                            if prediction:
-                                results[f"{market}_{interval}"] = {
-                                    "status": "success",
-                                    "prediction_id": prediction.id,
-                                    "direction": prediction.predicted_direction,
-                                }
-                            else:
-                                results[f"{market}_{interval}"] = {"status": "no_data"}
-                        except Exception as e:
-                            logger.error(f"Prediction failed for {market}/{interval}: {e}")
-                            results[f"{market}_{interval}"] = {"status": "error", "error": str(e)}
+                for market in ["mcx", "comex"]:
+                    try:
+                        prediction = await prediction_engine.generate_prediction(
+                            db, "silver", market, interval
+                        )
+                        if prediction:
+                            results[f"{market}_{interval}"] = {
+                                "status": "success",
+                                "prediction_id": prediction.get("id"),
+                                "direction": prediction.get("predicted_direction"),
+                                "target_time": prediction.get("target_time"),
+                            }
+                        else:
+                            results[f"{market}_{interval}"] = {"status": "no_data"}
+                    except Exception as e:
+                        logger.error(f"Prediction failed for {market}/{interval}: {e}")
+                        results[f"{market}_{interval}"] = {"status": "error", "error": str(e)}
 
-                logger.info(f"Prediction generation complete: {results}")
+                logger.info(f"{interval} prediction generation complete: {results}")
                 return results
 
         except Exception as e:
-            logger.error(f"Prediction generation failed: {e}")
+            logger.error(f"{interval} prediction generation failed: {e}")
             return {"status": "error", "error": str(e)}
+
+    async def generate_30m_predictions(self):
+        """Generate 30-minute predictions for both markets."""
+        return await self._generate_predictions_for_interval("30m")
+
+    async def generate_1h_predictions(self):
+        """Generate 1-hour predictions for both markets."""
+        return await self._generate_predictions_for_interval("1h")
+
+    async def generate_4h_predictions(self):
+        """Generate 4-hour predictions for both markets."""
+        return await self._generate_predictions_for_interval("4h")
+
+    async def generate_daily_predictions(self):
+        """Generate daily predictions for both markets."""
+        return await self._generate_predictions_for_interval("1d")
 
     async def verify_predictions(self):
         """Verify predictions that have reached their target time."""
