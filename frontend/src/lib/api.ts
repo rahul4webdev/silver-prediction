@@ -15,19 +15,29 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://predictionapi.gahfau
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_URL}/api/v1${endpoint}`;
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
 
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details');
+      console.error(`API error for ${endpoint}: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`API error: ${response.status} ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      console.error(`Network error for ${endpoint}: CORS or connectivity issue`, error);
+      throw new Error(`Network error: Unable to reach API at ${url}`);
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 export async function getLivePrice(asset: string, market: string): Promise<LivePrice> {

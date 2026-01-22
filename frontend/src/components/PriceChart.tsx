@@ -190,15 +190,29 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
 
         seriesRef.current = candleSeries;
 
-        // Format data for chart - sort by timestamp
+        // Format data for chart - sort by timestamp and filter invalid entries
         const chartData = candles
-          .map((candle: PriceCandle) => ({
-            time: Math.floor(new Date(candle.timestamp).getTime() / 1000) as any,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-          }))
+          .filter((candle: PriceCandle) =>
+            candle.timestamp &&
+            candle.open != null &&
+            candle.high != null &&
+            candle.low != null &&
+            candle.close != null &&
+            !isNaN(candle.open) &&
+            !isNaN(candle.close)
+          )
+          .map((candle: PriceCandle) => {
+            const time = Math.floor(new Date(candle.timestamp).getTime() / 1000);
+            if (isNaN(time)) return null;
+            return {
+              time: time as any,
+              open: candle.open,
+              high: candle.high,
+              low: candle.low,
+              close: candle.close,
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null)
           .sort((a: any, b: any) => a.time - b.time);
 
         // Remove duplicates (same timestamp)
