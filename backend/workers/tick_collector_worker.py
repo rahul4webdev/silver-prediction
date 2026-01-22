@@ -49,8 +49,8 @@ class TickCollectorWorker:
 
     # MCX trading hours (IST)
     MCX_OPEN_HOUR = 9  # 9:00 AM IST
-    MCX_CLOSE_HOUR = 23  # 11:30 PM IST
-    MCX_CLOSE_MINUTE = 30
+    MCX_CLOSE_HOUR = 23  # 11:55 PM IST
+    MCX_CLOSE_MINUTE = 55
 
     def __init__(self):
         self._running = False

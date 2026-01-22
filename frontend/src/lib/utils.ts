@@ -2,7 +2,10 @@
  * Utility functions
  */
 
-export function formatCurrency(value: number, currency: string = 'INR'): string {
+export function formatCurrency(value: number | null | undefined, currency: string = 'INR'): string {
+  if (value === null || value === undefined) {
+    return '-';
+  }
   if (currency === 'INR') {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
@@ -18,14 +21,20 @@ export function formatCurrency(value: number, currency: string = 'INR'): string 
   }).format(value);
 }
 
-export function formatNumber(value: number, decimals: number = 2): string {
+export function formatNumber(value: number | null | undefined, decimals: number = 2): string {
+  if (value === null || value === undefined) {
+    return '-';
+  }
   return new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   }).format(value);
 }
 
-export function formatPercent(value: number): string {
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '-';
+  }
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(2)}%`;
 }
