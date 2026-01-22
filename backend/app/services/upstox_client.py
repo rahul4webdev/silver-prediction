@@ -502,11 +502,25 @@ class UpstoxClient:
             raise UpstoxAPIError(f"API error: {result.get('message')}")
 
         data = result.get("data", {})
-        quote = data.get(instrument_key, {})
+
+        # Upstox returns data with a dynamic key like "MCX_FO:SILVERM26APRFUT"
+        # instead of the instrument_key we passed, so get the first (and only) item
+        quote = {}
+        symbol_key = instrument_key
+        if data:
+            symbol_key = list(data.keys())[0]
+            quote = data[symbol_key]
+
+        # Get price from different possible fields
+        price = quote.get("last_price")
+        if price is None:
+            # Try to use close from ohlc if last_price not available
+            ohlc = quote.get("ohlc", {})
+            price = ohlc.get("close") or ohlc.get("open")
 
         return {
-            "symbol": instrument_key,
-            "price": quote.get("last_price"),
+            "symbol": symbol_key,
+            "price": price,
             "open": quote.get("ohlc", {}).get("open"),
             "high": quote.get("ohlc", {}).get("high"),
             "low": quote.get("ohlc", {}).get("low"),
