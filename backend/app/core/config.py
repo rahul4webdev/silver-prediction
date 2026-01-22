@@ -13,6 +13,7 @@ Tokens expire daily at midnight IST and need to be refreshed via OAuth.
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -88,17 +89,20 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Construct async database URL."""
+        """Construct async database URL with URL-encoded password."""
+        # Password may contain special chars like @ that need URL encoding
+        encoded_password = quote_plus(self.postgres_password)
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+asyncpg://{self.postgres_user}:{encoded_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
     @property
     def sync_database_url(self) -> str:
         """Construct sync database URL for Alembic."""
+        encoded_password = quote_plus(self.postgres_password)
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql://{self.postgres_user}:{encoded_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
