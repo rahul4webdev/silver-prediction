@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getLivePrice } from '@/lib/api';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import type { LivePrice } from '@/lib/types';
+import LatestPredictions from './LatestPredictions';
 
 interface PriceCardProps {
   market: 'mcx' | 'comex';
@@ -46,6 +47,14 @@ export default function PriceCard({ market }: PriceCardProps) {
         <div className="skeleton h-4 w-24 rounded mb-4"></div>
         <div className="skeleton h-10 w-40 rounded mb-2"></div>
         <div className="skeleton h-4 w-20 rounded"></div>
+        <div className="grid grid-cols-4 gap-2 mt-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-white/5 rounded-lg p-2 animate-pulse">
+              <div className="h-3 w-8 bg-white/10 rounded mb-1 mx-auto"></div>
+              <div className="h-4 w-12 bg-white/10 rounded mx-auto"></div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -55,6 +64,7 @@ export default function PriceCard({ market }: PriceCardProps) {
       <div className="glass-card p-6">
         <div className="text-zinc-400 text-sm">{market.toUpperCase()} Silver</div>
         <div className="text-zinc-500 mt-2">Unable to load price</div>
+        <LatestPredictions market={market} />
       </div>
     );
   }
@@ -80,22 +90,29 @@ export default function PriceCard({ market }: PriceCardProps) {
           </span>
         </div>
 
-        <div className="text-3xl font-bold text-white mb-2">
-          {formatCurrency(price.price, currency)}
-        </div>
-
-        <div className={cn(
-          "text-sm font-medium",
-          isPositive ? "text-bullish" : "text-bearish"
-        )}>
-          {price.change_percent !== undefined && formatPercent(price.change_percent)}
+        <div className="flex items-baseline gap-3">
+          <div className="text-3xl font-bold text-white">
+            {formatCurrency(price.price, currency)}
+          </div>
+          <div className={cn(
+            "text-sm font-medium",
+            isPositive ? "text-bullish" : "text-bearish"
+          )}>
+            {price.change_percent !== undefined && formatPercent(price.change_percent)}
+          </div>
         </div>
 
         {market === 'mcx' && (
-          <div className="text-xs text-zinc-500 mt-2">
+          <div className="text-xs text-zinc-500 mt-1">
             Price per kg
           </div>
         )}
+
+        {/* Latest Predictions Section */}
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <div className="text-xs text-zinc-500 mb-2">Latest Predictions</div>
+          <LatestPredictions market={market} />
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { getPriceData } from '@/lib/api';
 import type { PriceCandle, Market } from '@/lib/types';
 
@@ -9,304 +9,349 @@ interface PriceChartProps {
   interval?: string;
 }
 
+interface ChartData {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface VolumeData {
+  time: number;
+  value: number;
+  color: string;
+}
+
 export default function PriceChart({ market, interval = '1h' }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
-  const seriesRef = useRef<any>(null);
+  const chartInstanceRef = useRef<any>(null);
+  const candleSeriesRef = useRef<any>(null);
+  const volumeSeriesRef = useRef<any>(null);
+  const mountedRef = useRef(true);
+  const initializingRef = useRef(false);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [chartInfo, setChartInfo] = useState<{
-    lastPrice: number | null;
-    change: number | null;
-    candleCount: number;
-  }>({ lastPrice: null, change: null, candleCount: 0 });
+  const [chartData, setChartData] = useState<ChartData[]>([]);
+  const [volumeData, setVolumeData] = useState<VolumeData[]>([]);
+  const [retryCount, setRetryCount] = useState(0);
 
-  // Reset zoom to fit all data
-  const handleResetZoom = useCallback(() => {
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
+  // Memoized chart info
+  const chartInfo = useMemo(() => {
+    if (chartData.length === 0) {
+      return { lastPrice: null, change: null, candleCount: 0 };
     }
-  }, []);
+    const lastCandle = chartData[chartData.length - 1];
+    const firstCandle = chartData[0];
+    const priceChange = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+    return {
+      lastPrice: lastCandle.close,
+      change: priceChange,
+      candleCount: chartData.length,
+    };
+  }, [chartData]);
 
-  // Zoom in
-  const handleZoomIn = useCallback(() => {
-    if (chartRef.current) {
-      const timeScale = chartRef.current.timeScale();
-      const currentRange = timeScale.getVisibleLogicalRange();
-      if (currentRange) {
-        const rangeSize = currentRange.to - currentRange.from;
-        const newSize = rangeSize * 0.7; // Zoom in by 30%
-        const center = (currentRange.to + currentRange.from) / 2;
-        timeScale.setVisibleLogicalRange({
-          from: center - newSize / 2,
-          to: center + newSize / 2,
-        });
+  // Fetch data separately from chart initialization
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const candles = await getPriceData('silver', market, interval, 200);
+
+      if (!mountedRef.current) return;
+
+      if (!candles || candles.length === 0) {
+        setError(`No data available for ${market.toUpperCase()} ${interval}`);
+        setChartData([]);
+        setVolumeData([]);
+        return;
       }
-    }
-  }, []);
 
-  // Zoom out
-  const handleZoomOut = useCallback(() => {
-    if (chartRef.current) {
-      const timeScale = chartRef.current.timeScale();
-      const currentRange = timeScale.getVisibleLogicalRange();
-      if (currentRange) {
-        const rangeSize = currentRange.to - currentRange.from;
-        const newSize = rangeSize * 1.4; // Zoom out by 40%
-        const center = (currentRange.to + currentRange.from) / 2;
-        timeScale.setVisibleLogicalRange({
-          from: center - newSize / 2,
-          to: center + newSize / 2,
-        });
-      }
-    }
-  }, []);
+      // Process and validate data
+      const processedData: ChartData[] = [];
+      const processedVolume: VolumeData[] = [];
+      const seenTimes = new Set<number>();
 
-  useEffect(() => {
-    let chart: any = null;
-    let isSubscribed = true;
-
-    async function initChart() {
-      if (!containerRef.current) return;
-
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Dynamically import lightweight-charts
-        const { createChart, CrosshairMode } = await import('lightweight-charts');
-
-        // Fetch price data
-        const candles = await getPriceData('silver', market, interval, 200);
-
-        if (!isSubscribed) return;
-
-        if (!candles || candles.length === 0) {
-          setError(`No data available for ${market.toUpperCase()} ${interval}`);
-          setLoading(false);
-          return;
+      for (const candle of candles) {
+        if (!candle.timestamp || candle.open == null || candle.high == null ||
+            candle.low == null || candle.close == null) {
+          continue;
         }
 
-        // Calculate price info
-        const lastCandle = candles[candles.length - 1];
-        const firstCandle = candles[0];
-        const priceChange = lastCandle && firstCandle
-          ? ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100
-          : 0;
+        const time = Math.floor(new Date(candle.timestamp).getTime() / 1000);
+        if (isNaN(time) || seenTimes.has(time)) continue;
 
-        setChartInfo({
-          lastPrice: lastCandle?.close || null,
-          change: priceChange,
-          candleCount: candles.length,
+        seenTimes.add(time);
+        processedData.push({
+          time,
+          open: Number(candle.open),
+          high: Number(candle.high),
+          low: Number(candle.low),
+          close: Number(candle.close),
         });
 
-        // Clear previous chart
-        if (chartRef.current) {
-          chartRef.current.remove();
-          chartRef.current = null;
-          seriesRef.current = null;
-        }
-
-        // Create chart with full interactivity
-        chart = createChart(containerRef.current, {
-          layout: {
-            background: { color: 'transparent' },
-            textColor: '#a1a1aa',
-          },
-          grid: {
-            vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
-            horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
-          },
-          width: containerRef.current.clientWidth,
-          height: 450,
-          crosshair: {
-            mode: CrosshairMode.Normal,
-            vertLine: {
-              width: 1,
-              color: 'rgba(6, 182, 212, 0.4)',
-              style: 2,
-              labelBackgroundColor: '#0e7490',
-            },
-            horzLine: {
-              width: 1,
-              color: 'rgba(6, 182, 212, 0.4)',
-              style: 2,
-              labelBackgroundColor: '#0e7490',
-            },
-          },
-          rightPriceScale: {
-            borderColor: 'rgba(255, 255, 255, 0.1)',
-            scaleMargins: {
-              top: 0.1,
-              bottom: 0.2,
-            },
-          },
-          timeScale: {
-            borderColor: 'rgba(255, 255, 255, 0.1)',
-            timeVisible: true,
-            secondsVisible: false,
-            rightOffset: 5,
-            barSpacing: 10,
-            minBarSpacing: 2,
-            fixLeftEdge: false,
-            fixRightEdge: false,
-          },
-          handleScroll: {
-            mouseWheel: true,
-            pressedMouseMove: true,
-            horzTouchDrag: true,
-            vertTouchDrag: true,
-          },
-          handleScale: {
-            axisPressedMouseMove: {
-              time: true,
-              price: true,
-            },
-            axisDoubleClickReset: {
-              time: true,
-              price: true,
-            },
-            mouseWheel: true,
-            pinch: true,
-          },
-        });
-
-        chartRef.current = chart;
-
-        // Add candlestick series
-        const candleSeries = chart.addCandlestickSeries({
-          upColor: '#22c55e',
-          downColor: '#ef4444',
-          borderDownColor: '#ef4444',
-          borderUpColor: '#22c55e',
-          wickDownColor: '#ef4444',
-          wickUpColor: '#22c55e',
-          priceFormat: {
-            type: 'price',
-            precision: market === 'comex' ? 2 : 0,
-            minMove: market === 'comex' ? 0.01 : 1,
-          },
-        });
-
-        seriesRef.current = candleSeries;
-
-        // Format data for chart - sort by timestamp and filter invalid entries
-        const chartData = candles
-          .filter((candle: PriceCandle) =>
-            candle.timestamp &&
-            candle.open != null &&
-            candle.high != null &&
-            candle.low != null &&
-            candle.close != null &&
-            !isNaN(candle.open) &&
-            !isNaN(candle.close)
-          )
-          .map((candle: PriceCandle) => {
-            const time = Math.floor(new Date(candle.timestamp).getTime() / 1000);
-            if (isNaN(time)) return null;
-            return {
-              time: time as any,
-              open: candle.open,
-              high: candle.high,
-              low: candle.low,
-              close: candle.close,
-            };
-          })
-          .filter((item): item is NonNullable<typeof item> => item !== null)
-          .sort((a: any, b: any) => a.time - b.time);
-
-        // Remove duplicates (same timestamp)
-        const uniqueData = chartData.filter((item: any, index: number, arr: any[]) =>
-          index === 0 || item.time !== arr[index - 1].time
-        );
-
-        candleSeries.setData(uniqueData);
-
-        // Add volume series if available
-        const volumeData = candles
-          .filter((c: PriceCandle) => c.volume && c.volume > 0)
-          .map((candle: PriceCandle) => ({
-            time: Math.floor(new Date(candle.timestamp).getTime() / 1000) as any,
-            value: candle.volume,
+        if (candle.volume && candle.volume > 0) {
+          processedVolume.push({
+            time,
+            value: Number(candle.volume),
             color: candle.close >= candle.open ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
-          }))
-          .sort((a: any, b: any) => a.time - b.time);
-
-        if (volumeData.length > 0) {
-          const volumeSeries = chart.addHistogramSeries({
-            priceFormat: { type: 'volume' },
-            priceScaleId: '',
           });
-
-          chart.priceScale('').applyOptions({
-            scaleMargins: {
-              top: 0.85,
-              bottom: 0,
-            },
-          });
-
-          // Remove duplicate timestamps for volume
-          const uniqueVolumeData = volumeData.filter((item: any, index: number, arr: any[]) =>
-            index === 0 || item.time !== arr[index - 1].time
-          );
-
-          volumeSeries.setData(uniqueVolumeData);
-        }
-
-        // Fit content to show all data
-        chart.timeScale().fitContent();
-
-      } catch (err) {
-        console.error('Chart error:', err);
-        if (isSubscribed) {
-          setError(`Failed to load chart: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        }
-      } finally {
-        if (isSubscribed) {
-          setLoading(false);
         }
       }
+
+      // Sort by time
+      processedData.sort((a, b) => a.time - b.time);
+      processedVolume.sort((a, b) => a.time - b.time);
+
+      setChartData(processedData);
+      setVolumeData(processedVolume);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to fetch chart data:', err);
+      if (mountedRef.current) {
+        setError(`Failed to load data: ${err instanceof Error ? err.message : 'Network error'}`);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [market, interval]);
+
+  // Initialize chart when data is ready
+  const initializeChart = useCallback(async () => {
+    if (!containerRef.current || chartData.length === 0 || initializingRef.current) {
+      return;
     }
 
-    initChart();
+    initializingRef.current = true;
 
-    // Handle resize
+    try {
+      // Clean up existing chart
+      if (chartInstanceRef.current) {
+        try {
+          chartInstanceRef.current.remove();
+        } catch {
+          // Ignore cleanup errors
+        }
+        chartInstanceRef.current = null;
+        candleSeriesRef.current = null;
+        volumeSeriesRef.current = null;
+      }
+
+      // Dynamic import
+      const { createChart, CrosshairMode } = await import('lightweight-charts');
+
+      if (!mountedRef.current || !containerRef.current) {
+        initializingRef.current = false;
+        return;
+      }
+
+      const container = containerRef.current;
+      const chart = createChart(container, {
+        layout: {
+          background: { color: 'transparent' },
+          textColor: '#a1a1aa',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        },
+        width: container.clientWidth,
+        height: 400,
+        crosshair: {
+          mode: CrosshairMode.Normal,
+          vertLine: {
+            width: 1,
+            color: 'rgba(6, 182, 212, 0.4)',
+            style: 2,
+            labelBackgroundColor: '#0e7490',
+          },
+          horzLine: {
+            width: 1,
+            color: 'rgba(6, 182, 212, 0.4)',
+            style: 2,
+            labelBackgroundColor: '#0e7490',
+          },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          scaleMargins: { top: 0.1, bottom: 0.2 },
+        },
+        timeScale: {
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 5,
+          barSpacing: 8,
+          minBarSpacing: 2,
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        handleScale: {
+          axisPressedMouseMove: { time: true, price: true },
+          axisDoubleClickReset: { time: true, price: true },
+          mouseWheel: true,
+          pinch: true,
+        },
+      });
+
+      chartInstanceRef.current = chart;
+
+      // Add candlestick series
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: '#22c55e',
+        downColor: '#ef4444',
+        borderDownColor: '#ef4444',
+        borderUpColor: '#22c55e',
+        wickDownColor: '#ef4444',
+        wickUpColor: '#22c55e',
+        priceFormat: {
+          type: 'price',
+          precision: market === 'comex' ? 2 : 0,
+          minMove: market === 'comex' ? 0.01 : 1,
+        },
+      });
+
+      candleSeriesRef.current = candleSeries;
+      candleSeries.setData(chartData as any);
+
+      // Add volume series if available
+      if (volumeData.length > 0) {
+        const volumeSeries = chart.addHistogramSeries({
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+        });
+
+        chart.priceScale('').applyOptions({
+          scaleMargins: { top: 0.85, bottom: 0 },
+        });
+
+        volumeSeriesRef.current = volumeSeries;
+        volumeSeries.setData(volumeData as any);
+      }
+
+      // Fit content
+      chart.timeScale().fitContent();
+
+    } catch (err) {
+      console.error('Chart initialization error:', err);
+      if (mountedRef.current) {
+        setError(`Chart initialization failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    } finally {
+      initializingRef.current = false;
+    }
+  }, [chartData, volumeData, market]);
+
+  // Fetch data when market/interval changes
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchData();
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [fetchData, retryCount]);
+
+  // Initialize chart when data is ready
+  useEffect(() => {
+    if (chartData.length > 0 && !loading) {
+      initializeChart();
+    }
+  }, [chartData, loading, initializeChart]);
+
+  // Handle resize
+  useEffect(() => {
     const handleResize = () => {
-      if (chartRef.current && containerRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+      if (chartInstanceRef.current && containerRef.current) {
+        chartInstanceRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
+        });
       }
     };
 
     window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
-      isSubscribed = false;
-      window.removeEventListener('resize', handleResize);
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-        seriesRef.current = null;
+      mountedRef.current = false;
+      if (chartInstanceRef.current) {
+        try {
+          chartInstanceRef.current.remove();
+        } catch {
+          // Ignore cleanup errors
+        }
+        chartInstanceRef.current = null;
       }
     };
-  }, [market, interval]);
+  }, []);
+
+  // Control handlers
+  const handleZoomIn = useCallback(() => {
+    if (chartInstanceRef.current) {
+      const timeScale = chartInstanceRef.current.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
+      if (range) {
+        const size = range.to - range.from;
+        const center = (range.to + range.from) / 2;
+        const newSize = size * 0.7;
+        timeScale.setVisibleLogicalRange({
+          from: center - newSize / 2,
+          to: center + newSize / 2,
+        });
+      }
+    }
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    if (chartInstanceRef.current) {
+      const timeScale = chartInstanceRef.current.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
+      if (range) {
+        const size = range.to - range.from;
+        const center = (range.to + range.from) / 2;
+        const newSize = size * 1.4;
+        timeScale.setVisibleLogicalRange({
+          from: center - newSize / 2,
+          to: center + newSize / 2,
+        });
+      }
+    }
+  }, []);
+
+  const handleReset = useCallback(() => {
+    if (chartInstanceRef.current) {
+      chartInstanceRef.current.timeScale().fitContent();
+    }
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    setRetryCount(c => c + 1);
+  }, []);
 
   const formatPrice = (price: number | null) => {
     if (price === null) return '-';
-    if (market === 'comex') {
-      return `$${price.toFixed(2)}`;
-    }
+    if (market === 'comex') return `$${price.toFixed(2)}`;
     return `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
   };
 
   return (
-    <div className="glass-card p-4">
-      {/* Header with controls */}
+    <div className="relative">
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <div>
           <div className="flex items-center gap-3">
-            <h3 className="text-white font-semibold">
-              Silver {market.toUpperCase()}
-            </h3>
+            <h3 className="text-white font-semibold">Silver {market.toUpperCase()}</h3>
             {chartInfo.lastPrice && (
               <span className="text-lg font-bold text-white">
                 {formatPrice(chartInfo.lastPrice)}
@@ -319,11 +364,11 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
             )}
           </div>
           <p className="text-zinc-500 text-xs mt-1">
-            {chartInfo.candleCount} candles | Scroll to zoom, drag to pan
+            {chartInfo.candleCount > 0 ? `${chartInfo.candleCount} candles` : 'Loading...'}
           </p>
         </div>
 
-        {/* Chart Controls */}
+        {/* Controls */}
         <div className="flex items-center gap-2">
           <button
             onClick={handleZoomIn}
@@ -344,9 +389,9 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
             </svg>
           </button>
           <button
-            onClick={handleResetZoom}
+            onClick={handleReset}
             className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
-            title="Reset Zoom (Fit All)"
+            title="Fit All"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -356,55 +401,57 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
           <div className="flex items-center gap-2 text-xs">
             <div className="flex items-center gap-1">
               <div className="w-3 h-3 bg-green-500 rounded"></div>
-              <span className="text-zinc-400">Bullish</span>
+              <span className="text-zinc-400">Up</span>
             </div>
             <div className="flex items-center gap-1">
               <div className="w-3 h-3 bg-red-500 rounded"></div>
-              <span className="text-zinc-400">Bearish</span>
+              <span className="text-zinc-400">Down</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="h-[450px] flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-            <div className="text-zinc-500">Loading {market.toUpperCase()} {interval} chart...</div>
-          </div>
-        </div>
-      )}
-
-      {/* Error State */}
-      {error && !loading && (
-        <div className="h-[450px] flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-zinc-500 mb-2">{error}</div>
-            <button
-              onClick={() => window.location.reload()}
-              className="text-cyan-400 hover:text-cyan-300 text-sm"
-            >
-              Try refreshing
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Chart Container */}
-      <div
-        ref={containerRef}
-        className={loading || error ? 'hidden' : ''}
-        style={{ minHeight: '450px' }}
-      />
+      <div className="relative" style={{ minHeight: '400px' }}>
+        {/* Loading overlay */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/50 z-10 rounded-lg">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+              <div className="text-zinc-400 text-sm">Loading chart...</div>
+            </div>
+          </div>
+        )}
 
-      {/* Chart Tips */}
-      {!loading && !error && (
+        {/* Error state */}
+        {error && !loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80 z-10 rounded-lg">
+            <div className="text-center p-4">
+              <div className="text-red-400 mb-3">{error}</div>
+              <button
+                onClick={handleRetry}
+                className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-lg hover:bg-cyan-500/30 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Chart */}
+        <div
+          ref={containerRef}
+          className="w-full rounded-lg overflow-hidden"
+          style={{ height: '400px' }}
+        />
+      </div>
+
+      {/* Tips */}
+      {!loading && !error && chartInfo.candleCount > 0 && (
         <div className="mt-3 pt-3 border-t border-white/5 text-xs text-zinc-500 flex flex-wrap gap-4">
-          <span>Mouse wheel: Zoom</span>
+          <span>Scroll: Zoom</span>
           <span>Drag: Pan</span>
-          <span>Double-click axis: Reset</span>
-          <span>Pinch: Zoom on touch</span>
+          <span>Double-click: Reset</span>
         </div>
       )}
     </div>

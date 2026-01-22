@@ -1,5 +1,5 @@
 """
-Ensemble predictor that combines Prophet, LSTM, and XGBoost models.
+Ensemble predictor that combines Prophet, LSTM, XGBoost, GRU, and Random Forest models.
 Uses weighted voting with dynamic weight adjustment based on recent performance.
 """
 
@@ -31,6 +31,16 @@ try:
 except ImportError:
     XGBoostModel = None
 
+try:
+    from app.ml.models.gru_model import GRUModel
+except ImportError:
+    GRUModel = None
+
+try:
+    from app.ml.models.random_forest_model import RandomForestModel
+except ImportError:
+    RandomForestModel = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +49,7 @@ class EnsemblePredictor:
     Ensemble predictor combining multiple models.
 
     Features:
-    - Weighted voting across Prophet, LSTM, and XGBoost
+    - Weighted voting across Prophet, LSTM, XGBoost, GRU, and Random Forest
     - Dynamic weight adjustment based on recent accuracy
     - Probability distribution output with confidence intervals
     - Direction probability calculation
@@ -58,23 +68,41 @@ class EnsemblePredictor:
         self.prophet = ProphetModel() if ProphetModel else None
         self.lstm = LSTMModel() if LSTMModel else None
         self.xgboost = XGBoostModel() if XGBoostModel else None
+        self.gru = GRUModel() if GRUModel else None
+        self.random_forest = RandomForestModel() if RandomForestModel else None
 
         # Log which models are available
         available = []
         if self.prophet: available.append("prophet")
         if self.lstm: available.append("lstm")
         if self.xgboost: available.append("xgboost")
+        if self.gru: available.append("gru")
+        if self.random_forest: available.append("random_forest")
         logger.info(f"Available models: {available}")
 
-        # Get default weights for interval
+        # Get default weights for interval (expand for new models)
         interval_enum = PredictionInterval(interval) if interval in [e.value for e in PredictionInterval] else PredictionInterval.THIRTY_MIN
-        self.weights = INTERVAL_CONFIGS[interval_enum].model_weights.copy()
+        base_weights = INTERVAL_CONFIGS[interval_enum].model_weights.copy()
+
+        # Distribute weights across 5 models
+        self.weights = {
+            "prophet": base_weights.get("prophet", 0.2),
+            "lstm": base_weights.get("lstm", 0.2),
+            "xgboost": base_weights.get("xgboost", 0.2),
+            "gru": 0.2,
+            "random_forest": 0.2,
+        }
+        # Normalize
+        total = sum(self.weights.values())
+        self.weights = {k: v / total for k, v in self.weights.items()}
 
         # Performance tracking for weight adjustment
         self.model_performance: Dict[str, List[float]] = {
             "prophet": [],
             "lstm": [],
             "xgboost": [],
+            "gru": [],
+            "random_forest": [],
         }
 
         self.is_trained = False
@@ -113,7 +141,7 @@ class EnsemblePredictor:
             logger.warning("Prophet model not available, skipping")
             results["prophet"] = {"error": "Model not installed"}
 
-        # Train LSTM (needs features)
+        # Train LSTM
         if self.lstm:
             try:
                 logger.info("Training LSTM model...")
@@ -136,6 +164,30 @@ class EnsemblePredictor:
         else:
             logger.warning("XGBoost model not available, skipping")
             results["xgboost"] = {"error": "Model not installed"}
+
+        # Train GRU
+        if self.gru:
+            try:
+                logger.info("Training GRU model...")
+                results["gru"] = self.gru.train(df, target_col, validation_split)
+            except Exception as e:
+                logger.error(f"GRU training failed: {e}")
+                results["gru"] = {"error": str(e)}
+        else:
+            logger.warning("GRU model not available, skipping")
+            results["gru"] = {"error": "Model not installed"}
+
+        # Train Random Forest
+        if self.random_forest:
+            try:
+                logger.info("Training Random Forest model...")
+                results["random_forest"] = self.random_forest.train(df, target_col, validation_split)
+            except Exception as e:
+                logger.error(f"Random Forest training failed: {e}")
+                results["random_forest"] = {"error": str(e)}
+        else:
+            logger.warning("Random Forest model not available, skipping")
+            results["random_forest"] = {"error": "Model not installed"}
 
         self.is_trained = True
         self.last_trained = datetime.now()
@@ -235,6 +287,8 @@ class EnsemblePredictor:
             ("prophet", self.prophet),
             ("lstm", self.lstm),
             ("xgboost", self.xgboost),
+            ("gru", self.gru),
+            ("random_forest", self.random_forest),
         ]:
             try:
                 if model is not None and model.is_trained:
@@ -258,7 +312,7 @@ class EnsemblePredictor:
         total_weight = 0.0
 
         for model_name, pred in valid_predictions:
-            weight = self.weights.get(model_name, 0.33)
+            weight = self.weights.get(model_name, 0.2)
             ensemble_price += weight * pred.predicted_price
             ensemble_std += weight * pred.std_dev
             direction_votes[pred.direction] += weight * pred.direction_probability
@@ -366,6 +420,8 @@ class EnsemblePredictor:
             ("prophet", self.prophet),
             ("lstm", self.lstm),
             ("xgboost", self.xgboost),
+            ("gru", self.gru),
+            ("random_forest", self.random_forest),
         ]:
             if model is None:
                 continue
@@ -395,6 +451,8 @@ class EnsemblePredictor:
             ("prophet", self.prophet),
             ("lstm", self.lstm),
             ("xgboost", self.xgboost),
+            ("gru", self.gru),
+            ("random_forest", self.random_forest),
         ]:
             if model is None:
                 continue
@@ -422,7 +480,13 @@ class EnsemblePredictor:
     def get_info(self) -> Dict[str, Any]:
         """Get ensemble information."""
         models_info = {}
-        for name, model in [("prophet", self.prophet), ("lstm", self.lstm), ("xgboost", self.xgboost)]:
+        for name, model in [
+            ("prophet", self.prophet),
+            ("lstm", self.lstm),
+            ("xgboost", self.xgboost),
+            ("gru", self.gru),
+            ("random_forest", self.random_forest),
+        ]:
             if model is not None:
                 models_info[name] = model.get_model_info()
             else:

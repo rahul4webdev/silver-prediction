@@ -37,6 +37,9 @@ export default function RootLayout({
               <a href="/predictions" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                 Predictions
               </a>
+              <a href="/history" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                History
+              </a>
               <a href="/accuracy" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                 Accuracy
               </a>

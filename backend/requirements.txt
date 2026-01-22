@@ -78,3 +78,9 @@ tenacity>=8.2.0,<8.4.0
 # PROTOBUF (For Upstox WebSocket)
 # =============================================================================
 protobuf>=4.25.0,<5.0.0
+
+# =============================================================================
+# SENTIMENT ANALYSIS (Optional - for enhanced predictions)
+# =============================================================================
+# transformers>=4.35.0  # Optional: For FinBERT model (install manually if needed)
+# torch  # Required for transformers (install via: pip install torch --index-url https://download.pytorch.org/whl/cpu)

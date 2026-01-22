@@ -135,3 +135,45 @@ export async function getPriceData(
     return [];
   }
 }
+
+export interface SentimentData {
+  status: string;
+  asset: string;
+  sentiment: {
+    overall: number;
+    label: string;
+    confidence: number;
+  };
+  stats: {
+    article_count: number;
+    bullish_count: number;
+    bearish_count: number;
+    neutral_count: number;
+    average_relevance: number;
+  };
+  timestamp: string;
+  articles: Array<{
+    title: string;
+    source: string;
+    published_at: string;
+    url: string;
+    sentiment_score: number | null;
+    relevance_score: number | null;
+  }>;
+}
+
+export async function getSentiment(
+  asset: string = 'silver',
+  lookbackDays: number = 3
+): Promise<SentimentData | null> {
+  const params = new URLSearchParams({ asset, lookback_days: lookbackDays.toString() });
+  try {
+    const data = await fetchAPI<SentimentData>(`/sentiment/current?${params}`);
+    if (data.status === 'error') {
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}

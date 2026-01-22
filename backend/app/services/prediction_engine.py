@@ -18,6 +18,14 @@ from app.models.price_data import PriceData
 from app.ml.models.ensemble import EnsemblePredictor
 from app.ml.features.technical import add_technical_features
 
+# Optional sentiment imports
+try:
+    from app.services.news_sentiment import news_sentiment_service
+    from app.ml.features.sentiment import sentiment_feature_engine
+    SENTIMENT_AVAILABLE = True
+except ImportError:
+    SENTIMENT_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +107,28 @@ class PredictionEngine:
 
         return df
 
+    async def get_sentiment_features(self, asset: str = "silver") -> Dict[str, float]:
+        """
+        Get sentiment features for an asset.
+
+        Args:
+            asset: Asset to get sentiment for
+
+        Returns:
+            Dict of sentiment features
+        """
+        if not SENTIMENT_AVAILABLE:
+            return {}
+
+        try:
+            sentiment = await news_sentiment_service.get_sentiment(asset=asset)
+            features = news_sentiment_service.sentiment_to_features(sentiment)
+            logger.info(f"Sentiment features for {asset}: {features}")
+            return features
+        except Exception as e:
+            logger.warning(f"Failed to get sentiment features: {e}")
+            return {}
+
     async def generate_prediction(
         self,
         db: AsyncSession,
@@ -106,6 +136,7 @@ class PredictionEngine:
         market: str = "mcx",
         interval: str = "30m",
         horizon: int = 1,
+        include_sentiment: bool = True,
     ) -> Dict[str, Any]:
         """
         Generate a prediction and store it.
@@ -116,6 +147,7 @@ class PredictionEngine:
             market: Market (mcx or comex)
             interval: Prediction interval
             horizon: Periods ahead
+            include_sentiment: Whether to fetch and include sentiment features
 
         Returns:
             Prediction result dict
@@ -136,6 +168,25 @@ class PredictionEngine:
 
         # Add technical features
         df = add_technical_features(df)
+
+        # Add sentiment features (optional)
+        sentiment_data = {}
+        if include_sentiment and SENTIMENT_AVAILABLE:
+            try:
+                sentiment = await news_sentiment_service.get_sentiment(asset=asset)
+                sentiment_data = {
+                    "overall_sentiment": sentiment.overall_sentiment,
+                    "sentiment_label": sentiment.sentiment_label,
+                    "confidence": sentiment.confidence,
+                    "article_count": sentiment.article_count,
+                }
+                # Add sentiment features to dataframe
+                features = news_sentiment_service.sentiment_to_features(sentiment)
+                for feature_name, value in features.items():
+                    df[feature_name] = value
+                logger.info(f"Added sentiment features: {list(features.keys())}")
+            except Exception as e:
+                logger.warning(f"Failed to add sentiment features: {e}")
 
         # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
@@ -178,8 +229,17 @@ class PredictionEngine:
             ci_95_lower=Decimal(str(ensemble_pred["ci_95"]["lower"])),
             ci_95_upper=Decimal(str(ensemble_pred["ci_95"]["upper"])),
             model_weights=prediction_result["model_weights"],
-            features_used={"interval": interval, "data_points": len(df)},
+            features_used={
+                "interval": interval,
+                "data_points": len(df),
+                "sentiment_included": bool(sentiment_data),
+            },
         )
+
+        # Include sentiment in response
+        prediction_dict = prediction.to_dict()
+        if sentiment_data:
+            prediction_dict["sentiment"] = sentiment_data
 
         # Store prediction
         db.add(prediction)
@@ -191,7 +251,7 @@ class PredictionEngine:
             f"({prediction.predicted_price}) with {prediction.direction_confidence:.2%} confidence"
         )
 
-        return prediction.to_dict()
+        return prediction_dict
 
     async def verify_pending_predictions(
         self,

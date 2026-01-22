@@ -1,0 +1,509 @@
+"""
+News sentiment analysis service for silver/gold price prediction.
+Fetches financial news and analyzes sentiment to provide features for ML models.
+
+Uses multiple news sources:
+1. NewsAPI.org - General financial news
+2. Google News RSS - Free alternative
+3. FinViz - Financial news aggregator
+"""
+
+import asyncio
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
+
+import aiohttp
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+
+class NewsArticle(BaseModel):
+    """Represents a news article."""
+    title: str
+    description: Optional[str] = None
+    source: str
+    published_at: datetime
+    url: str
+    sentiment_score: Optional[float] = None  # -1 (bearish) to +1 (bullish)
+    relevance_score: Optional[float] = None  # 0 to 1
+
+
+class SentimentResult(BaseModel):
+    """Aggregated sentiment result."""
+    overall_sentiment: float  # -1 to +1
+    sentiment_label: str  # bearish, neutral, bullish
+    confidence: float  # 0 to 1
+    article_count: int
+    bullish_count: int
+    bearish_count: int
+    neutral_count: int
+    average_relevance: float
+    timestamp: datetime
+    articles: List[NewsArticle]
+
+
+class NewsSentimentService:
+    """
+    Service for fetching and analyzing news sentiment for commodities.
+
+    Features:
+    - Multi-source news aggregation
+    - Keyword-based relevance filtering
+    - Simple lexicon-based sentiment analysis
+    - Caching to avoid API rate limits
+    """
+
+    # Keywords for filtering relevant articles
+    SILVER_KEYWORDS = [
+        "silver", "slv", "precious metal", "comex silver", "mcx silver",
+        "silver price", "silver futures", "white metal", "industrial metal",
+        "silver demand", "silver supply", "silver mining", "silver etf"
+    ]
+
+    GOLD_KEYWORDS = [
+        "gold", "gld", "precious metal", "comex gold", "mcx gold",
+        "gold price", "gold futures", "yellow metal", "gold demand",
+        "gold supply", "gold mining", "gold etf", "bullion"
+    ]
+
+    # General commodity keywords that affect silver/gold
+    MACRO_KEYWORDS = [
+        "inflation", "fed", "federal reserve", "interest rate", "dollar",
+        "treasury", "bond yield", "risk", "hedge", "safe haven",
+        "central bank", "monetary policy", "recession", "economic",
+        "geopolitical", "china", "india", "jewelry demand"
+    ]
+
+    # Sentiment lexicons for financial context
+    BULLISH_WORDS = {
+        "surge", "rally", "soar", "jump", "gain", "rise", "climb",
+        "bullish", "optimistic", "demand", "buying", "support",
+        "breakout", "momentum", "upside", "strength", "positive",
+        "record", "high", "beat", "exceed", "growth", "expansion",
+        "recovery", "boost", "advance", "upgrade", "outperform"
+    }
+
+    BEARISH_WORDS = {
+        "drop", "fall", "plunge", "decline", "crash", "bearish",
+        "pessimistic", "selling", "pressure", "breakdown", "weak",
+        "downside", "negative", "low", "miss", "below", "loss",
+        "recession", "contraction", "downgrade", "underperform",
+        "concern", "fear", "risk", "uncertainty", "volatile"
+    }
+
+    INTENSITY_MODIFIERS = {
+        "very": 1.5, "extremely": 2.0, "slightly": 0.5, "somewhat": 0.7,
+        "highly": 1.5, "significantly": 1.5, "sharply": 1.8, "strongly": 1.5
+    }
+
+    def __init__(
+        self,
+        newsapi_key: Optional[str] = None,
+        cache_ttl_minutes: int = 15,
+    ):
+        """
+        Initialize the news sentiment service.
+
+        Args:
+            newsapi_key: Optional API key for NewsAPI.org
+            cache_ttl_minutes: Cache time-to-live in minutes
+        """
+        self.newsapi_key = newsapi_key
+        self.cache_ttl = timedelta(minutes=cache_ttl_minutes)
+        self._cache: Dict[str, tuple] = {}  # {key: (timestamp, data)}
+
+    def _get_cache(self, key: str) -> Optional[Any]:
+        """Get cached data if not expired."""
+        if key in self._cache:
+            timestamp, data = self._cache[key]
+            if datetime.now() - timestamp < self.cache_ttl:
+                return data
+            del self._cache[key]
+        return None
+
+    def _set_cache(self, key: str, data: Any) -> None:
+        """Set cache with current timestamp."""
+        self._cache[key] = (datetime.now(), data)
+
+    async def fetch_google_news_rss(
+        self,
+        query: str,
+        language: str = "en",
+    ) -> List[NewsArticle]:
+        """
+        Fetch news from Google News RSS feed (free, no API key needed).
+
+        Args:
+            query: Search query
+            language: Language code
+
+        Returns:
+            List of news articles
+        """
+        articles = []
+
+        try:
+            encoded_query = quote_plus(query)
+            url = f"https://news.google.com/rss/search?q={encoded_query}&hl={language}&gl=US&ceid=US:en"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as response:
+                    if response.status != 200:
+                        logger.warning(f"Google News RSS returned {response.status}")
+                        return articles
+
+                    content = await response.text()
+
+                    # Parse XML (simple regex parsing to avoid lxml dependency)
+                    items = re.findall(r'<item>(.*?)</item>', content, re.DOTALL)
+
+                    for item in items[:20]:  # Limit to 20 articles
+                        title_match = re.search(r'<title>(.*?)</title>', item)
+                        link_match = re.search(r'<link>(.*?)</link>', item)
+                        pub_date_match = re.search(r'<pubDate>(.*?)</pubDate>', item)
+                        source_match = re.search(r'<source[^>]*>(.*?)</source>', item)
+
+                        if title_match and link_match:
+                            # Parse publication date
+                            pub_date = datetime.now()
+                            if pub_date_match:
+                                try:
+                                    # Format: "Tue, 21 Jan 2025 10:30:00 GMT"
+                                    date_str = pub_date_match.group(1)
+                                    pub_date = datetime.strptime(
+                                        date_str, "%a, %d %b %Y %H:%M:%S %Z"
+                                    )
+                                except ValueError:
+                                    pass
+
+                            # Clean title (remove CDATA and HTML entities)
+                            title = title_match.group(1)
+                            title = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', title)
+                            title = title.replace('&amp;', '&').replace('&quot;', '"')
+
+                            articles.append(NewsArticle(
+                                title=title,
+                                description=None,
+                                source=source_match.group(1) if source_match else "Google News",
+                                published_at=pub_date,
+                                url=link_match.group(1),
+                            ))
+
+        except asyncio.TimeoutError:
+            logger.warning("Google News RSS request timed out")
+        except Exception as e:
+            logger.error(f"Error fetching Google News: {e}")
+
+        return articles
+
+    async def fetch_newsapi(
+        self,
+        query: str,
+        from_date: Optional[datetime] = None,
+    ) -> List[NewsArticle]:
+        """
+        Fetch news from NewsAPI.org (requires API key).
+
+        Args:
+            query: Search query
+            from_date: Start date for articles
+
+        Returns:
+            List of news articles
+        """
+        if not self.newsapi_key:
+            return []
+
+        articles = []
+
+        try:
+            if from_date is None:
+                from_date = datetime.now() - timedelta(days=7)
+
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": query,
+                "from": from_date.strftime("%Y-%m-%d"),
+                "sortBy": "publishedAt",
+                "language": "en",
+                "apiKey": self.newsapi_key,
+                "pageSize": 50,
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=10) as response:
+                    if response.status != 200:
+                        logger.warning(f"NewsAPI returned {response.status}")
+                        return articles
+
+                    data = await response.json()
+
+                    for article in data.get("articles", []):
+                        pub_date = datetime.now()
+                        if article.get("publishedAt"):
+                            try:
+                                pub_date = datetime.fromisoformat(
+                                    article["publishedAt"].replace("Z", "+00:00")
+                                )
+                            except ValueError:
+                                pass
+
+                        articles.append(NewsArticle(
+                            title=article.get("title", ""),
+                            description=article.get("description"),
+                            source=article.get("source", {}).get("name", "Unknown"),
+                            published_at=pub_date,
+                            url=article.get("url", ""),
+                        ))
+
+        except asyncio.TimeoutError:
+            logger.warning("NewsAPI request timed out")
+        except Exception as e:
+            logger.error(f"Error fetching NewsAPI: {e}")
+
+        return articles
+
+    def calculate_relevance(
+        self,
+        article: NewsArticle,
+        asset: str = "silver",
+    ) -> float:
+        """
+        Calculate relevance score for an article.
+
+        Args:
+            article: News article
+            asset: Asset to check relevance for
+
+        Returns:
+            Relevance score 0-1
+        """
+        text = f"{article.title} {article.description or ''}".lower()
+
+        # Get relevant keywords based on asset
+        if asset.lower() == "silver":
+            primary_keywords = self.SILVER_KEYWORDS
+        elif asset.lower() == "gold":
+            primary_keywords = self.GOLD_KEYWORDS
+        else:
+            primary_keywords = self.SILVER_KEYWORDS + self.GOLD_KEYWORDS
+
+        # Check primary keywords
+        primary_matches = sum(1 for kw in primary_keywords if kw in text)
+
+        # Check macro keywords
+        macro_matches = sum(1 for kw in self.MACRO_KEYWORDS if kw in text)
+
+        # Calculate relevance score
+        # Primary keywords are more important
+        primary_score = min(primary_matches / 2, 1.0) * 0.7
+        macro_score = min(macro_matches / 3, 1.0) * 0.3
+
+        return primary_score + macro_score
+
+    def analyze_sentiment(self, text: str) -> float:
+        """
+        Analyze sentiment of text using lexicon-based approach.
+
+        Args:
+            text: Text to analyze
+
+        Returns:
+            Sentiment score -1 (bearish) to +1 (bullish)
+        """
+        text = text.lower()
+        words = re.findall(r'\b\w+\b', text)
+
+        bullish_score = 0.0
+        bearish_score = 0.0
+
+        for i, word in enumerate(words):
+            # Check for intensity modifiers
+            modifier = 1.0
+            if i > 0:
+                prev_word = words[i - 1]
+                modifier = self.INTENSITY_MODIFIERS.get(prev_word, 1.0)
+
+            if word in self.BULLISH_WORDS:
+                bullish_score += modifier
+            elif word in self.BEARISH_WORDS:
+                bearish_score += modifier
+
+        total = bullish_score + bearish_score
+        if total == 0:
+            return 0.0
+
+        # Normalize to -1 to +1 range
+        sentiment = (bullish_score - bearish_score) / total
+        return max(-1.0, min(1.0, sentiment))
+
+    async def get_sentiment(
+        self,
+        asset: str = "silver",
+        lookback_days: int = 3,
+    ) -> SentimentResult:
+        """
+        Get aggregated sentiment for an asset.
+
+        Args:
+            asset: Asset to analyze (silver, gold)
+            lookback_days: Days of news to analyze
+
+        Returns:
+            Aggregated sentiment result
+        """
+        cache_key = f"sentiment_{asset}_{lookback_days}"
+        cached = self._get_cache(cache_key)
+        if cached:
+            return cached
+
+        # Build search query
+        if asset.lower() == "silver":
+            queries = ["silver price", "silver futures", "precious metals silver"]
+        elif asset.lower() == "gold":
+            queries = ["gold price", "gold futures", "precious metals gold"]
+        else:
+            queries = [f"{asset} price", f"{asset} commodity"]
+
+        # Fetch articles from multiple sources
+        all_articles = []
+
+        # Fetch from Google News RSS (free)
+        for query in queries:
+            articles = await self.fetch_google_news_rss(query)
+            all_articles.extend(articles)
+
+        # Fetch from NewsAPI if key available
+        if self.newsapi_key:
+            for query in queries[:1]:  # Limit API calls
+                articles = await self.fetch_newsapi(
+                    query,
+                    from_date=datetime.now() - timedelta(days=lookback_days),
+                )
+                all_articles.extend(articles)
+
+        # Filter by date
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+        recent_articles = [a for a in all_articles if a.published_at >= cutoff]
+
+        # Remove duplicates by title similarity
+        unique_articles = []
+        seen_titles = set()
+        for article in recent_articles:
+            # Normalize title for comparison
+            normalized = re.sub(r'[^\w\s]', '', article.title.lower())[:50]
+            if normalized not in seen_titles:
+                seen_titles.add(normalized)
+                unique_articles.append(article)
+
+        # Calculate relevance and sentiment for each article
+        analyzed_articles = []
+        for article in unique_articles:
+            relevance = self.calculate_relevance(article, asset)
+
+            # Only include relevant articles
+            if relevance >= 0.3:
+                text = f"{article.title} {article.description or ''}"
+                sentiment = self.analyze_sentiment(text)
+
+                article.relevance_score = relevance
+                article.sentiment_score = sentiment
+                analyzed_articles.append(article)
+
+        # Sort by relevance
+        analyzed_articles.sort(key=lambda x: x.relevance_score or 0, reverse=True)
+
+        # Calculate aggregate sentiment
+        if not analyzed_articles:
+            result = SentimentResult(
+                overall_sentiment=0.0,
+                sentiment_label="neutral",
+                confidence=0.0,
+                article_count=0,
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=0,
+                average_relevance=0.0,
+                timestamp=datetime.now(),
+                articles=[],
+            )
+        else:
+            # Weight sentiment by relevance
+            total_weight = sum(a.relevance_score or 1 for a in analyzed_articles)
+            weighted_sentiment = sum(
+                (a.sentiment_score or 0) * (a.relevance_score or 1)
+                for a in analyzed_articles
+            ) / total_weight
+
+            # Count sentiment categories
+            bullish = sum(1 for a in analyzed_articles if (a.sentiment_score or 0) > 0.1)
+            bearish = sum(1 for a in analyzed_articles if (a.sentiment_score or 0) < -0.1)
+            neutral = len(analyzed_articles) - bullish - bearish
+
+            # Determine label
+            if weighted_sentiment > 0.15:
+                label = "bullish"
+            elif weighted_sentiment < -0.15:
+                label = "bearish"
+            else:
+                label = "neutral"
+
+            # Confidence based on article count and sentiment consistency
+            consistency = abs(bullish - bearish) / max(len(analyzed_articles), 1)
+            article_factor = min(len(analyzed_articles) / 10, 1.0)
+            confidence = consistency * 0.7 + article_factor * 0.3
+
+            avg_relevance = sum(a.relevance_score or 0 for a in analyzed_articles) / len(analyzed_articles)
+
+            result = SentimentResult(
+                overall_sentiment=weighted_sentiment,
+                sentiment_label=label,
+                confidence=confidence,
+                article_count=len(analyzed_articles),
+                bullish_count=bullish,
+                bearish_count=bearish,
+                neutral_count=neutral,
+                average_relevance=avg_relevance,
+                timestamp=datetime.now(),
+                articles=analyzed_articles[:10],  # Return top 10 articles
+            )
+
+        self._set_cache(cache_key, result)
+        return result
+
+    def sentiment_to_features(self, sentiment: SentimentResult) -> Dict[str, float]:
+        """
+        Convert sentiment result to features for ML models.
+
+        Args:
+            sentiment: Sentiment result
+
+        Returns:
+            Dict of feature values
+        """
+        return {
+            "news_sentiment": sentiment.overall_sentiment,
+            "news_confidence": sentiment.confidence,
+            "news_bullish_ratio": sentiment.bullish_count / max(sentiment.article_count, 1),
+            "news_bearish_ratio": sentiment.bearish_count / max(sentiment.article_count, 1),
+            "news_article_count": min(sentiment.article_count / 20, 1.0),  # Normalized
+            "news_avg_relevance": sentiment.average_relevance,
+        }
+
+
+# Create singleton with config
+def _create_service() -> NewsSentimentService:
+    """Create service with optional API key from config."""
+    try:
+        from app.core.config import settings
+        return NewsSentimentService(newsapi_key=settings.newsapi_key)
+    except Exception:
+        return NewsSentimentService()
+
+
+# Singleton instance
+news_sentiment_service = _create_service()

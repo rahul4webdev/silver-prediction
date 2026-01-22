@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # News Sentiment
+    # ==========================================================================
+    newsapi_key: Optional[str] = Field(
+        default=None, description="NewsAPI.org API key (optional, for enhanced sentiment)"
+    )
+
+    # ==========================================================================
     # Notifications
     # ==========================================================================
     telegram_bot_token: Optional[str] = Field(

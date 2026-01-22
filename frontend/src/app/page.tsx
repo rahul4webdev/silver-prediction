@@ -5,6 +5,7 @@ import PriceCard from '@/components/PriceCard';
 import PredictionCard from '@/components/PredictionCard';
 import PriceChart from '@/components/PriceChart';
 import AccuracyCard from '@/components/AccuracyCard';
+import SentimentCard from '@/components/SentimentCard';
 import type { Market, Interval } from '@/lib/types';
 
 const intervals: { value: Interval; label: string }[] = [
@@ -86,10 +87,11 @@ export default function Dashboard() {
         <PriceChart market={selectedMarket} interval={selectedInterval} />
       </div>
 
-      {/* Bottom Row: Prediction & Accuracy */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Bottom Row: Prediction, Accuracy & Sentiment */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <PredictionCard market={selectedMarket} interval={selectedInterval} />
         <AccuracyCard />
+        <SentimentCard asset="silver" />
       </div>
 
       {/* Quick Stats */}
