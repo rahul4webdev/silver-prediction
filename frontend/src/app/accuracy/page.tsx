@@ -1,388 +1,310 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getAccuracySummary, getAccuracyTrend, getPredictions } from '@/lib/api';
-import type { AccuracySummary, Prediction } from '@/lib/types';
+import { getAccuracySummary } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import type { AccuracySummary, Market } from '@/lib/types';
+
+const markets: { value: Market; label: string }[] = [
+  { value: 'mcx', label: 'MCX (India)' },
+  { value: 'comex', label: 'COMEX (US)' },
+];
+
+const periods = [
+  { value: 7, label: '7 Days' },
+  { value: 30, label: '30 Days' },
+  { value: 90, label: '90 Days' },
+];
 
 export default function AccuracyPage() {
-  const [period, setPeriod] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
   const [accuracy, setAccuracy] = useState<AccuracySummary | null>(null);
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
+  const [selectedPeriod, setSelectedPeriod] = useState(30);
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
+    async function fetchAccuracy() {
       try {
-        const periodDays =
-          period === '7d' ? 7 : period === '30d' ? 30 : period === '90d' ? 90 : 365;
-
-        const [accuracyData, predictionsData] = await Promise.all([
-          getAccuracySummary('silver', undefined, undefined, periodDays).catch(() => null),
-          getPredictions('silver', undefined, undefined, 50, true).catch(() => []),
-        ]);
-
-        setAccuracy(accuracyData);
-        setPredictions(predictionsData);
-      } catch (error) {
-        console.error('Error loading accuracy data:', error);
+        setLoading(true);
+        const data = await getAccuracySummary('silver', selectedPeriod);
+        setAccuracy(data);
+      } catch {
+        setAccuracy(null);
       } finally {
         setLoading(false);
       }
     }
 
-    loadData();
-  }, [period]);
+    fetchAccuracy();
+  }, [selectedMarket, selectedPeriod]);
+
+  const MetricCard = ({
+    title,
+    value,
+    subtitle,
+    target,
+    status,
+  }: {
+    title: string;
+    value: string | number;
+    subtitle?: string;
+    target?: string;
+    status?: 'good' | 'warning' | 'bad';
+  }) => (
+    <div className="glass-card p-6">
+      <div className="text-xs text-zinc-500 mb-2">{title}</div>
+      <div className={cn(
+        'text-3xl font-bold mb-1',
+        status === 'good' && 'text-green-400',
+        status === 'warning' && 'text-yellow-400',
+        status === 'bad' && 'text-red-400',
+        !status && 'text-white'
+      )}>
+        {value}
+      </div>
+      {subtitle && <div className="text-xs text-zinc-500">{subtitle}</div>}
+      {target && <div className="text-xs text-zinc-600 mt-1">Target: {target}</div>}
+    </div>
+  );
+
+  const ProgressBar = ({
+    value,
+    target,
+    label,
+  }: {
+    value: number;
+    target: number;
+    label: string;
+  }) => {
+    const isGood = value >= target;
+    return (
+      <div className="mb-4">
+        <div className="flex items-center justify-between text-sm mb-1">
+          <span className="text-zinc-400">{label}</span>
+          <span className={cn(
+            'font-medium',
+            isGood ? 'text-green-400' : 'text-yellow-400'
+          )}>
+            {value.toFixed(1)}%
+          </span>
+        </div>
+        <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all duration-500',
+              isGood ? 'bg-green-500' : 'bg-yellow-500'
+            )}
+            style={{ width: `${Math.min(value, 100)}%` }}
+          />
+        </div>
+        <div className="text-xs text-zinc-600 mt-1">Target: {target}%</div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="spinner"></div>
+      <div className="space-y-6">
+        <div className="glass-card p-6">
+          <div className="skeleton h-8 w-48 rounded mb-2"></div>
+          <div className="skeleton h-4 w-96 rounded"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="glass-card p-6">
+              <div className="skeleton h-4 w-24 rounded mb-3"></div>
+              <div className="skeleton h-10 w-20 rounded mb-2"></div>
+              <div className="skeleton h-3 w-16 rounded"></div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Safe access with defaults
-  const directionAccuracy = accuracy?.direction_accuracy?.overall ?? 0;
-  const totalPredictions = accuracy?.total_predictions ?? 0;
-  const verifiedPredictions = accuracy?.verified_predictions ?? 0;
-  const correctPredictions = accuracy?.direction_accuracy?.correct ?? 0;
+  if (!accuracy || accuracy.total_predictions === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="glass-card p-6">
+          <h1 className="text-2xl font-bold text-white mb-2">Model Accuracy</h1>
+          <p className="text-zinc-400">Track prediction performance and confidence interval coverage.</p>
+        </div>
+        <div className="glass-card p-12 text-center">
+          <div className="text-6xl mb-4 opacity-20">📊</div>
+          <h2 className="text-xl font-semibold text-white mb-2">No Accuracy Data Yet</h2>
+          <p className="text-zinc-400 max-w-md mx-auto">
+            Accuracy metrics will be available once predictions are generated and verified against actual prices.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-  // Handle both ci_coverage and confidence_interval_coverage
-  const ciCoverage = accuracy?.ci_coverage || accuracy?.confidence_interval_coverage || {
-    ci_50: 0,
-    ci_80: 0,
-    ci_95: 0,
-  };
-
-  // Safe access for streaks
-  const streaks = accuracy?.streaks || {
-    current: { type: 'win' as const, count: 0 },
-    best_win: 0,
-    worst_loss: 0,
-  };
-
-  // Safe access for error metrics
-  const errorMetrics = accuracy?.error_metrics || {
-    mae: 0,
-    mape: 0,
-    rmse: 0,
-  };
+  const directionAccuracy = accuracy.direction_accuracy?.overall ?? 0;
+  const ci50 = accuracy.ci_coverage?.ci_50 ?? 0;
+  const ci80 = accuracy.ci_coverage?.ci_80 ?? 0;
+  const ci95 = accuracy.ci_coverage?.ci_95 ?? 0;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Accuracy Metrics</h1>
-          <p className="text-sm text-zinc-400">
-            Track prediction accuracy and model performance
-          </p>
+      <div className="glass-card p-6">
+        <h1 className="text-2xl font-bold text-white mb-2">Model Accuracy</h1>
+        <p className="text-zinc-400">Track prediction performance and confidence interval coverage.</p>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4">
+        <div className="glass-card p-1 flex">
+          {markets.map((market) => (
+            <button
+              key={market.value}
+              onClick={() => setSelectedMarket(market.value)}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-all',
+                selectedMarket === market.value
+                  ? 'bg-cyan-500/20 text-cyan-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
+            >
+              {market.label}
+            </button>
+          ))}
         </div>
-        <div className="mt-4 sm:mt-0">
-          <div className="segmented-control">
-            {(['7d', '30d', '90d', 'all'] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={period === p ? 'active' : ''}
-              >
-                {p === 'all' ? 'All' : p.toUpperCase()}
-              </button>
-            ))}
-          </div>
+
+        <div className="glass-card p-1 flex">
+          {periods.map((period) => (
+            <button
+              key={period.value}
+              onClick={() => setSelectedPeriod(period.value)}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-all',
+                selectedPeriod === period.value
+                  ? 'bg-cyan-500/20 text-cyan-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
+            >
+              {period.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Main Accuracy Gauge */}
-      <div className="card mb-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
-          {/* Gauge */}
-          <div className="flex flex-col items-center">
-            <div className="relative w-48 h-48">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
-                <defs>
-                  <linearGradient id="gradient-accuracy" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#00d4ff" />
-                    <stop offset="100%" stopColor="#7c3aed" />
-                  </linearGradient>
-                </defs>
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="50"
-                  fill="none"
-                  stroke="rgba(255,255,255,0.1)"
-                  strokeWidth="10"
-                />
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="50"
-                  fill="none"
-                  stroke="url(#gradient-accuracy)"
-                  strokeWidth="10"
-                  strokeLinecap="round"
-                  strokeDasharray={`${directionAccuracy * 314} 314`}
-                  style={{ transition: 'stroke-dasharray 1s ease-out' }}
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-bold gradient-text">
-                  {(directionAccuracy * 100).toFixed(1)}%
-                </span>
-                <span className="text-sm text-zinc-500">Direction Accuracy</span>
+      {/* Key Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <MetricCard
+          title="Direction Accuracy"
+          value={`${directionAccuracy.toFixed(1)}%`}
+          subtitle={`${accuracy.direction_accuracy?.correct ?? 0} correct predictions`}
+          target=">55%"
+          status={directionAccuracy >= 55 ? 'good' : directionAccuracy >= 50 ? 'warning' : 'bad'}
+        />
+        <MetricCard
+          title="Total Predictions"
+          value={accuracy.total_predictions}
+          subtitle={`${accuracy.verified_predictions} verified`}
+        />
+        <MetricCard
+          title="Mean Absolute Error"
+          value={`${(accuracy.error_metrics?.mae ?? 0).toFixed(2)}`}
+          subtitle="Price units"
+        />
+        <MetricCard
+          title="MAPE"
+          value={`${(accuracy.error_metrics?.mape ?? 0).toFixed(2)}%`}
+          subtitle="Mean Absolute Percentage Error"
+          status={(accuracy.error_metrics?.mape ?? 100) < 2 ? 'good' : (accuracy.error_metrics?.mape ?? 100) < 5 ? 'warning' : 'bad'}
+        />
+      </div>
+
+      {/* Confidence Interval Coverage */}
+      <div className="glass-card p-6">
+        <h2 className="text-lg font-semibold text-white mb-6">Confidence Interval Coverage</h2>
+        <div className="max-w-2xl">
+          <ProgressBar value={ci50} target={50} label="50% CI Coverage" />
+          <ProgressBar value={ci80} target={80} label="80% CI Coverage" />
+          <ProgressBar value={ci95} target={95} label="95% CI Coverage" />
+        </div>
+        <p className="text-xs text-zinc-600 mt-4">
+          A well-calibrated model should have actual prices falling within confidence intervals at rates matching the CI level.
+        </p>
+      </div>
+
+      {/* Streaks */}
+      {accuracy.streaks && (
+        <div className="glass-card p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Prediction Streaks</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="text-center p-4 bg-white/5 rounded-xl">
+              <div className="text-xs text-zinc-500 mb-2">Current Streak</div>
+              <div className={cn(
+                'text-2xl font-bold',
+                accuracy.streaks.current?.type === 'win' ? 'text-green-400' : 'text-red-400'
+              )}>
+                {accuracy.streaks.current?.count ?? 0} {accuracy.streaks.current?.type === 'win' ? 'Wins' : 'Losses'}
+              </div>
+            </div>
+            <div className="text-center p-4 bg-white/5 rounded-xl">
+              <div className="text-xs text-zinc-500 mb-2">Best Win Streak</div>
+              <div className="text-2xl font-bold text-green-400">
+                {accuracy.streaks.best_win ?? 0}
+              </div>
+            </div>
+            <div className="text-center p-4 bg-white/5 rounded-xl">
+              <div className="text-xs text-zinc-500 mb-2">Worst Loss Streak</div>
+              <div className="text-2xl font-bold text-red-400">
+                {accuracy.streaks.worst_loss ?? 0}
               </div>
             </div>
           </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="stat-item">
-              <div className="stat-value text-green-400">{correctPredictions}</div>
-              <div className="stat-label">Correct</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value text-red-400">{totalPredictions - correctPredictions}</div>
-              <div className="stat-label">Wrong</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value text-cyan-400">{totalPredictions}</div>
-              <div className="stat-label">Total</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value text-purple-400">{verifiedPredictions}</div>
-              <div className="stat-label">Verified</div>
-            </div>
-          </div>
-
-          {/* Streak */}
-          <div className="text-center lg:text-right">
-            <div className="inline-block p-6 rounded-2xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10">
-              <p className="text-sm text-zinc-500 mb-2">Current Streak</p>
-              <p className={`text-4xl font-bold ${
-                streaks.current.type === 'win' ? 'text-green-400' : 'text-red-400'
-              }`}>
-                {streaks.current.count} {streaks.current.type === 'win' ? 'Wins' : 'Losses'}
-              </p>
-              <p className="text-sm text-zinc-500 mt-2">
-                Best: <span className="text-green-400">{streaks.best_win} wins</span>
-              </p>
-            </div>
-          </div>
         </div>
-      </div>
+      )}
 
-      {/* CI Coverage & Error Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* CI Coverage */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-white mb-6">Confidence Interval Coverage</h3>
-          <p className="text-sm text-zinc-500 mb-6">
-            How well-calibrated are our confidence intervals? Target coverage should match the CI percentage.
-          </p>
-          <div className="space-y-6">
-            {[
-              { label: '50% CI', value: ciCoverage.ci_50, target: 0.5, color: 'from-blue-500 to-blue-400' },
-              { label: '80% CI', value: ciCoverage.ci_80, target: 0.8, color: 'from-purple-500 to-purple-400' },
-              { label: '95% CI', value: ciCoverage.ci_95, target: 0.95, color: 'from-pink-500 to-pink-400' },
-            ].map((ci) => (
-              <div key={ci.label}>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-zinc-400">{ci.label}</span>
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold ${
-                      Math.abs((ci.value ?? 0) - ci.target) < 0.1 ? 'text-green-400' : 'text-yellow-400'
-                    }`}>
-                      {((ci.value ?? 0) * 100).toFixed(1)}%
-                    </span>
-                    <span className="text-zinc-600">/</span>
-                    <span className="text-zinc-500">{(ci.target * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-                <div className="relative h-3 rounded-full bg-white/5 overflow-hidden">
-                  {/* Target marker */}
-                  <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-white/30"
-                    style={{ left: `${ci.target * 100}%` }}
-                  />
-                  {/* Actual value */}
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${ci.color} transition-all duration-1000`}
-                    style={{ width: `${(ci.value ?? 0) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Error Metrics */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-white mb-6">Error Metrics</h3>
-          <p className="text-sm text-zinc-500 mb-6">
-            Quantitative measures of prediction accuracy. Lower values indicate better performance.
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
-              <p className="text-3xl font-bold text-cyan-400">{errorMetrics.mae?.toFixed(2) ?? '0.00'}</p>
-              <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">MAE</p>
-              <p className="text-xs text-zinc-600">Mean Absolute Error</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
-              <p className="text-3xl font-bold text-purple-400">{errorMetrics.mape?.toFixed(2) ?? '0.00'}%</p>
-              <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">MAPE</p>
-              <p className="text-xs text-zinc-600">Mean Absolute % Error</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
-              <p className="text-3xl font-bold text-pink-400">{errorMetrics.rmse?.toFixed(2) ?? '0.00'}</p>
-              <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">RMSE</p>
-              <p className="text-xs text-zinc-600">Root Mean Square Error</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
-              <p className="text-3xl font-bold text-green-400">
-                {((accuracy?.direction_accuracy?.bullish_accuracy ?? 0) * 100).toFixed(1)}%
-              </p>
-              <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">Bullish</p>
-              <p className="text-xs text-zinc-600">Bullish Direction Accuracy</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Breakdown by Market/Interval */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* By Market */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-white mb-4">By Market</h3>
-          {Object.keys(accuracy?.by_market || {}).length > 0 ? (
-            <div className="space-y-4">
-              {Object.entries(accuracy?.by_market || {}).map(([market, data]) => (
-                <div key={market} className="flex items-center justify-between p-4 rounded-xl bg-white/5">
-                  <div>
-                    <p className="font-semibold text-white">{market.toUpperCase()}</p>
-                    <p className="text-sm text-zinc-500">{data.total || data.predictions} predictions</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-2xl font-bold ${
-                      data.accuracy >= 0.55 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {(data.accuracy * 100).toFixed(1)}%
-                    </p>
-                    <p className="text-xs text-zinc-500">{data.correct || Math.round(data.accuracy * (data.total || data.predictions))} correct</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <p className="text-zinc-500">No market data available</p>
-            </div>
-          )}
-        </div>
-
-        {/* By Interval */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-white mb-4">By Interval</h3>
-          {Object.keys(accuracy?.by_interval || {}).length > 0 ? (
-            <div className="space-y-4">
-              {Object.entries(accuracy?.by_interval || {}).map(([interval, data]) => (
-                <div key={interval} className="flex items-center justify-between p-4 rounded-xl bg-white/5">
-                  <div>
-                    <p className="font-semibold text-white">{interval}</p>
-                    <p className="text-sm text-zinc-500">{data.total || data.predictions} predictions</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-2xl font-bold ${
-                      data.accuracy >= 0.55 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {(data.accuracy * 100).toFixed(1)}%
-                    </p>
-                    <p className="text-xs text-zinc-500">{data.correct || Math.round(data.accuracy * (data.total || data.predictions))} correct</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <p className="text-zinc-500">No interval data available</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Verified Predictions */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-white mb-6">Recent Verified Predictions</h3>
-        {predictions.length > 0 ? (
+      {/* By Interval */}
+      {accuracy.by_interval && Object.keys(accuracy.by_interval).length > 0 && (
+        <div className="glass-card p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Performance by Interval</h2>
           <div className="overflow-x-auto">
-            <table className="data-table">
+            <table className="w-full">
               <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Direction</th>
-                  <th>Predicted</th>
-                  <th>Actual</th>
-                  <th>Error</th>
-                  <th>Result</th>
+                <tr className="border-b border-white/5">
+                  <th className="text-left text-xs text-zinc-500 font-medium p-3">Interval</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-3">Predictions</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-3">Accuracy</th>
                 </tr>
               </thead>
               <tbody>
-                {predictions.slice(0, 10).map((pred) => (
-                  <tr key={pred.id}>
-                    <td>
-                      {pred.target_time
-                        ? new Date(pred.target_time).toLocaleString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : 'N/A'}
-                    </td>
-                    <td>
-                      {pred.predicted_direction ? (
-                        <span className={`badge-${pred.predicted_direction}`}>
-                          {pred.predicted_direction.toUpperCase()}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-500">-</span>
-                      )}
-                    </td>
-                    <td className="font-mono">{pred.predicted_price?.toFixed(2) ?? '-'}</td>
-                    <td className="font-mono">{pred.actual_price?.toFixed(2) ?? '-'}</td>
-                    <td className={`font-mono ${
-                      Math.abs(pred.price_error_percent ?? 0) < 1 ? 'text-green-400' : 'text-yellow-400'
-                    }`}>
-                      {pred.price_error_percent !== undefined && pred.price_error_percent !== null
-                        ? `${pred.price_error_percent >= 0 ? '+' : ''}${pred.price_error_percent.toFixed(3)}%`
-                        : '-'}
-                    </td>
-                    <td>
-                      {pred.is_direction_correct !== null && pred.is_direction_correct !== undefined ? (
-                        pred.is_direction_correct ? (
-                          <span className="badge-success">✓ Correct</span>
-                        ) : (
-                          <span className="badge-error">✗ Wrong</span>
-                        )
-                      ) : (
-                        <span className="badge-warning">Pending</span>
-                      )}
+                {Object.entries(accuracy.by_interval).map(([interval, data]) => (
+                  <tr key={interval} className="border-b border-white/5">
+                    <td className="p-3 text-sm text-white uppercase">{interval}</td>
+                    <td className="p-3 text-sm text-zinc-300 text-right">{data.predictions}</td>
+                    <td className="p-3 text-right">
+                      <span className={cn(
+                        'text-sm font-medium',
+                        data.accuracy >= 55 ? 'text-green-400' : 'text-yellow-400'
+                      )}>
+                        {data.accuracy.toFixed(1)}%
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="text-center py-12">
-            <svg className="w-16 h-16 text-zinc-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <p className="text-lg font-semibold text-zinc-400">No Verified Predictions</p>
-            <p className="text-sm text-zinc-500 mt-1">Predictions will appear here after verification</p>
+        </div>
+      )}
+
+      {/* Disclaimer */}
+      <div className="glass-card p-4 border-yellow-500/20">
+        <div className="flex items-start gap-3">
+          <span className="text-yellow-400 text-xl">⚠️</span>
+          <div>
+            <div className="text-sm font-medium text-yellow-400 mb-1">Disclaimer</div>
+            <p className="text-xs text-zinc-400">
+              Past performance does not guarantee future results. Predictions are probabilistic and should be used as one input among many in your decision-making process. This is a decision support tool, not financial advice.
+            </p>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

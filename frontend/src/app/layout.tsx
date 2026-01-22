@@ -1,13 +1,12 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import Navigation from '@/components/layout/Navigation';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Silver Prediction | AI-Powered Price Forecasting',
-  description: 'Real-time silver price predictions for MCX and COMEX using advanced ML ensemble models.',
+  title: 'Silver Prediction System',
+  description: 'Real-time silver price predictions for MCX and COMEX markets',
 };
 
 export default function RootLayout({
@@ -16,39 +15,36 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} bg-gradient-dark min-h-screen`}>
-        <div className="relative min-h-screen grid-pattern">
-          {/* Background glow effects */}
-          <div className="hero-glow hero-glow-1" />
-          <div className="hero-glow hero-glow-2" />
-
-          {/* Navigation */}
-          <Navigation />
-
-          {/* Main content */}
-          <main className="relative z-10 pt-20">
-            {children}
-          </main>
-
-          {/* Footer */}
-          <footer className="relative z-10 border-t border-white/5 mt-20">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-                    <span className="text-white font-bold text-sm">Ag</span>
-                  </div>
-                  <span className="text-sm text-zinc-400">
-                    Silver Prediction System
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-500 text-center md:text-right max-w-md">
-                  Predictions are probabilistic, not certainties. This is a decision support tool, not financial advice.
-                </p>
+    <html lang="en">
+      <body className={inter.className}>
+        <div className="min-h-screen">
+          <nav className="glass-card mx-4 mt-4 px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-white">Silver Prediction</h1>
+                <p className="text-xs text-zinc-400">MCX & COMEX Analytics</p>
               </div>
             </div>
-          </footer>
+            <div className="flex items-center gap-2">
+              <a href="/" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                Dashboard
+              </a>
+              <a href="/predictions" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                Predictions
+              </a>
+              <a href="/accuracy" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                Accuracy
+              </a>
+            </div>
+          </nav>
+          <main className="p-4">
+            {children}
+          </main>
         </div>
       </body>
     </html>

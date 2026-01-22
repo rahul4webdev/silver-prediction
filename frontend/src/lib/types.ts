@@ -1,10 +1,48 @@
 /**
- * Type definitions for the Silver Prediction System
+ * Type definitions for Silver Prediction System
  */
 
+export interface PriceCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface LivePrice {
+  asset: string;
+  market: string;
+  symbol?: string;
+  price: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  previous_close?: number;
+  change?: number;
+  change_percent?: number;
+  volume?: number;
+  timestamp: string;
+  source: string;
+  currency?: string;
+  status?: string;
+  message?: string;
+}
+
+export interface HistoricalData {
+  asset: string;
+  market: string;
+  interval: string;
+  count: number;
+  candles: PriceCandle[];
+  source: string;
+  message?: string;
+}
+
 export interface Prediction {
-  id: string;
-  created_at: string;
+  id?: string;
+  created_at?: string;
   asset: string;
   market: string;
   interval: string;
@@ -20,61 +58,21 @@ export interface Prediction {
   ci_80_upper?: number;
   ci_95_lower?: number;
   ci_95_upper?: number;
-  confidence_intervals?: {
-    ci_50: { lower: number; upper: number };
-    ci_80: { lower: number; upper: number };
-    ci_95: { lower: number; upper: number };
-  };
-  model_weights: Record<string, number>;
-  model_version?: string;
+  model_weights?: Record<string, number>;
   actual_price?: number | null;
   is_direction_correct?: boolean | null;
-  price_error?: number | null;
-  price_error_percent?: number | null;
-  within_ci_50?: boolean | null;
-  within_ci_80?: boolean | null;
-  within_ci_95?: boolean | null;
   verified_at?: string | null;
-  verification?: {
-    actual_price: number | null;
-    is_direction_correct: boolean | null;
-    price_error: number | null;
-    price_error_percent: number | null;
-    within_ci_50: boolean | null;
-    within_ci_80: boolean | null;
-    within_ci_95: boolean | null;
-    verified_at: string | null;
-  } | null;
-}
-
-export interface PriceCandle {
-  timestamp: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
 }
 
 export interface AccuracySummary {
   total_predictions: number;
   verified_predictions: number;
   pending_verification?: number;
-  period_days?: number;
   direction_accuracy: {
     overall: number;
-    correct: number;
-    wrong?: number;
-    bullish_accuracy?: number;
-    bearish_accuracy?: number;
-    trend?: number[];
+    correct?: number;
   };
   ci_coverage: {
-    ci_50: number;
-    ci_80: number;
-    ci_95: number;
-  };
-  confidence_interval_coverage?: {
     ci_50: number;
     ci_80: number;
     ci_95: number;
@@ -84,42 +82,14 @@ export interface AccuracySummary {
     mape: number;
     rmse: number;
   };
-  by_interval: Record<string, { predictions: number; accuracy: number; total?: number; correct?: number }>;
-  by_market: Record<string, { predictions: number; accuracy: number; total?: number; correct?: number }>;
-  streaks: {
+  by_interval?: Record<string, { predictions: number; accuracy: number }>;
+  by_market?: Record<string, { predictions: number; accuracy: number }>;
+  streaks?: {
     current: { type: 'win' | 'loss'; count: number };
     best_win: number;
     worst_loss: number;
   };
 }
 
-export interface HealthStatus {
-  status: string;
-  timestamp?: string;
-  environment?: string;
-  database?: string;
-  has_token?: boolean;
-  trained_models?: number;
-  models?: Record<string, {
-    is_trained: boolean;
-    last_trained: string | null;
-    weights: Record<string, number>;
-  }>;
-}
-
-export interface ModelInfo {
-  interval: string;
-  is_trained: boolean;
-  last_trained: string | null;
-  weights: Record<string, number>;
-  models: Record<string, {
-    name: string;
-    is_trained: boolean;
-    last_trained: string | null;
-    training_metrics: Record<string, number>;
-  }>;
-}
-
 export type Market = 'mcx' | 'comex';
-export type Interval = '30m' | '1h' | '4h' | 'daily';
-export type Direction = 'bullish' | 'bearish' | 'neutral';
+export type Interval = '30m' | '1h' | '4h' | '1d';

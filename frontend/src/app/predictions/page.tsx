@@ -1,293 +1,230 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getPredictions, triggerPrediction } from '@/lib/api';
-import type { Prediction } from '@/lib/types';
+import { getPredictions } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import type { Prediction, Market, Interval } from '@/lib/types';
+
+const markets: { value: Market; label: string }[] = [
+  { value: 'mcx', label: 'MCX (India)' },
+  { value: 'comex', label: 'COMEX (US)' },
+];
+
+const intervals: { value: Interval; label: string }[] = [
+  { value: '30m', label: '30 Min' },
+  { value: '1h', label: '1 Hour' },
+  { value: '4h', label: '4 Hours' },
+  { value: '1d', label: 'Daily' },
+];
 
 export default function PredictionsPage() {
-  const [market, setMarket] = useState<'mcx' | 'comex'>('mcx');
-  const [interval, setInterval] = useState<'30m' | '1h' | '4h' | 'daily'>('30m');
-  const [filter, setFilter] = useState<'all' | 'verified' | 'pending'>('all');
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
+  const [selectedInterval, setSelectedInterval] = useState<Interval | 'all'>('all');
 
   useEffect(() => {
-    async function loadPredictions() {
-      setLoading(true);
+    async function fetchPredictions() {
       try {
-        const data = await getPredictions(
-          'silver',
-          market,
-          interval,
-          100,
-          filter === 'verified'
-        );
-
-        let filtered = data;
-        if (filter === 'pending') {
-          filtered = data.filter((p) => !p.verified_at);
-        }
-
-        setPredictions(filtered);
-      } catch (error) {
-        console.error('Error loading predictions:', error);
+        setLoading(true);
+        const data = await getPredictions('silver', selectedMarket, 50);
+        setPredictions(data);
+      } catch {
+        setPredictions([]);
       } finally {
         setLoading(false);
       }
     }
 
-    loadPredictions();
-  }, [market, interval, filter]);
+    fetchPredictions();
+  }, [selectedMarket]);
 
-  const handleGeneratePrediction = async () => {
-    setGenerating(true);
-    try {
-      const newPrediction = await triggerPrediction('silver', market, interval);
-      if (newPrediction) {
-        setPredictions((prev) => [newPrediction, ...prev]);
-      }
-    } catch (error) {
-      console.error('Error generating prediction:', error);
-    } finally {
-      setGenerating(false);
+  const filteredPredictions = selectedInterval === 'all'
+    ? predictions
+    : predictions.filter(p => p.interval === selectedInterval);
+
+  const formatPrice = (price: number, market: Market) => {
+    if (market === 'mcx') {
+      return `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
     }
+    return `$${price.toFixed(2)}`;
   };
 
-  const currency = market === 'mcx' ? '₹' : '$';
+  const formatTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-IN', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Prediction History</h1>
-          <p className="text-sm text-zinc-400">
-            View all predictions and their verification results
-          </p>
-        </div>
-        <button
-          onClick={handleGeneratePrediction}
-          disabled={generating}
-          className="btn-primary mt-4 sm:mt-0 flex items-center gap-2"
-        >
-          {generating ? (
-            <>
-              <div className="spinner-sm"></div>
-              Generating...
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              Generate Prediction
-            </>
-          )}
-        </button>
+      <div className="glass-card p-6">
+        <h1 className="text-2xl font-bold text-white mb-2">Predictions History</h1>
+        <p className="text-zinc-400">View all predictions with their outcomes and confidence intervals.</p>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4 mb-6">
-        <div className="segmented-control">
-          {(['mcx', 'comex'] as const).map((m) => (
+      <div className="flex flex-wrap gap-4">
+        {/* Market Filter */}
+        <div className="glass-card p-1 flex">
+          {markets.map((market) => (
             <button
-              key={m}
-              onClick={() => setMarket(m)}
-              className={market === m ? 'active' : ''}
+              key={market.value}
+              onClick={() => setSelectedMarket(market.value)}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-all',
+                selectedMarket === market.value
+                  ? 'bg-cyan-500/20 text-cyan-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
             >
-              {m.toUpperCase()}
+              {market.label}
             </button>
           ))}
         </div>
-        <div className="segmented-control">
-          {(['30m', '1h', '4h', 'daily'] as const).map((i) => (
+
+        {/* Interval Filter */}
+        <div className="glass-card p-1 flex">
+          <button
+            onClick={() => setSelectedInterval('all')}
+            className={cn(
+              'px-3 py-2 rounded-lg text-sm font-medium transition-all',
+              selectedInterval === 'all'
+                ? 'bg-cyan-500/20 text-cyan-400'
+                : 'text-zinc-400 hover:text-white'
+            )}
+          >
+            All
+          </button>
+          {intervals.map((interval) => (
             <button
-              key={i}
-              onClick={() => setInterval(i)}
-              className={interval === i ? 'active' : ''}
+              key={interval.value}
+              onClick={() => setSelectedInterval(interval.value)}
+              className={cn(
+                'px-3 py-2 rounded-lg text-sm font-medium transition-all',
+                selectedInterval === interval.value
+                  ? 'bg-cyan-500/20 text-cyan-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
             >
-              {i}
-            </button>
-          ))}
-        </div>
-        <div className="segmented-control">
-          {(['all', 'verified', 'pending'] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={filter === f ? 'active' : ''}
-            >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {interval.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Predictions List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="spinner"></div>
-        </div>
-      ) : predictions.length === 0 ? (
-        <div className="card">
-          <div className="empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <p className="empty-state-title">No Predictions Found</p>
-            <p className="empty-state-description">
-              Generate a new prediction or adjust the filters to see results.
+      {/* Predictions Table */}
+      <div className="glass-card overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center">
+            <div className="inline-block w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-zinc-400 mt-4">Loading predictions...</p>
+          </div>
+        ) : filteredPredictions.length === 0 ? (
+          <div className="p-8 text-center">
+            <p className="text-zinc-400">No predictions found.</p>
+            <p className="text-xs text-zinc-600 mt-2">
+              Predictions will appear here once the system generates them.
             </p>
           </div>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {predictions.map((pred) => (
-            <div key={pred.id} className="card card-hover">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-                {/* Left: Direction and Info */}
-                <div className="flex items-center gap-4">
-                  <div
-                    className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-                      pred.predicted_direction === 'bullish'
-                        ? 'bg-gradient-to-br from-green-500/20 to-emerald-500/10 border border-green-500/30'
-                        : pred.predicted_direction === 'bearish'
-                        ? 'bg-gradient-to-br from-red-500/20 to-rose-500/10 border border-red-500/30'
-                        : 'bg-gradient-to-br from-yellow-500/20 to-amber-500/10 border border-yellow-500/30'
-                    }`}
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/5">
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Time</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Interval</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Direction</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-4">Current</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-4">Predicted</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-4">80% CI</th>
+                  <th className="text-center text-xs text-zinc-500 font-medium p-4">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPredictions.map((prediction, index) => (
+                  <tr
+                    key={prediction.id || index}
+                    className="border-b border-white/5 hover:bg-white/5 transition-colors"
                   >
-                    <span className="text-3xl">
-                      {pred.predicted_direction === 'bullish'
-                        ? '↗'
-                        : pred.predicted_direction === 'bearish'
-                        ? '↘'
-                        : '→'}
-                    </span>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      {pred.predicted_direction ? (
-                        <span className={`badge-${pred.predicted_direction}`}>
-                          {pred.predicted_direction.toUpperCase()}
+                    <td className="p-4">
+                      <div className="text-sm text-white">
+                        {formatTime(prediction.prediction_time)}
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        Target: {formatTime(prediction.target_time)}
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <span className="text-sm text-zinc-300 uppercase">
+                        {prediction.interval}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <span className={cn(
+                        'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium',
+                        prediction.predicted_direction === 'bullish'
+                          ? 'bg-green-500/20 text-green-400'
+                          : prediction.predicted_direction === 'bearish'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-zinc-500/20 text-zinc-400'
+                      )}>
+                        {prediction.predicted_direction === 'bullish' ? '↑' : prediction.predicted_direction === 'bearish' ? '↓' : '→'}
+                        {prediction.predicted_direction}
+                        <span className="opacity-60">
+                          ({(prediction.direction_confidence * 100).toFixed(0)}%)
+                        </span>
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <span className="text-sm text-white">
+                        {formatPrice(prediction.current_price, selectedMarket)}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <span className="text-sm text-cyan-400 font-medium">
+                        {formatPrice(prediction.predicted_price, selectedMarket)}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <span className="text-xs text-zinc-400">
+                        {prediction.ci_80_lower && prediction.ci_80_upper ? (
+                          <>
+                            {formatPrice(prediction.ci_80_lower, selectedMarket)}
+                            {' - '}
+                            {formatPrice(prediction.ci_80_upper, selectedMarket)}
+                          </>
+                        ) : (
+                          '-'
+                        )}
+                      </span>
+                    </td>
+                    <td className="p-4 text-center">
+                      {prediction.actual_price !== null && prediction.actual_price !== undefined ? (
+                        <span className={cn(
+                          'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium',
+                          prediction.is_direction_correct
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-red-500/20 text-red-400'
+                        )}>
+                          {prediction.is_direction_correct ? '✓ Correct' : '✗ Wrong'}
                         </span>
                       ) : (
-                        <span className="text-zinc-500">Unknown</span>
+                        <span className="text-xs text-zinc-500">Pending</span>
                       )}
-                      <span className="text-xs text-zinc-500 uppercase bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                        {pred.market || 'N/A'}
-                      </span>
-                      <span className="text-xs text-zinc-500">{pred.interval || 'N/A'}</span>
-                    </div>
-                    <p className="text-sm text-zinc-400">
-                      Target:{' '}
-                      <span className="text-zinc-300">
-                        {pred.target_time
-                          ? new Date(pred.target_time).toLocaleString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                          : 'N/A'}
-                      </span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* Middle: Prices */}
-                <div className="flex items-center gap-4 lg:gap-8">
-                  <div className="text-center">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Current</p>
-                    <p className="text-lg font-bold text-white font-mono">
-                      {currency}{pred.current_price?.toFixed(2) ?? 'N/A'}
-                    </p>
-                  </div>
-                  <div className="text-zinc-600">→</div>
-                  <div className="text-center">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Predicted</p>
-                    <p className={`text-lg font-bold font-mono ${
-                      pred.predicted_direction === 'bullish' ? 'text-green-400' :
-                      pred.predicted_direction === 'bearish' ? 'text-red-400' : 'text-yellow-400'
-                    }`}>
-                      {currency}{pred.predicted_price?.toFixed(2) ?? 'N/A'}
-                    </p>
-                  </div>
-                  {pred.actual_price && (
-                    <>
-                      <div className="text-zinc-600">→</div>
-                      <div className="text-center">
-                        <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Actual</p>
-                        <p className={`text-lg font-bold font-mono ${
-                          pred.is_direction_correct ? 'text-green-400' : 'text-red-400'
-                        }`}>
-                          {currency}{pred.actual_price.toFixed(2)}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Right: Confidence and Result */}
-                <div className="flex items-center gap-6">
-                  <div className="text-center">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Confidence</p>
-                    <p className="text-lg font-bold text-cyan-400">
-                      {pred.direction_confidence
-                        ? (pred.direction_confidence * 100).toFixed(1) + '%'
-                        : 'N/A'}
-                    </p>
-                  </div>
-                  <div className="text-center min-w-[100px]">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Result</p>
-                    {pred.verified_at ? (
-                      pred.is_direction_correct ? (
-                        <span className="badge-success">✓ Correct</span>
-                      ) : (
-                        <span className="badge-error">✗ Wrong</span>
-                      )
-                    ) : (
-                      <span className="badge-warning">Pending</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Expanded Details */}
-              <div className="mt-6 pt-6 border-t border-white/5 grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="p-3 rounded-xl bg-white/5">
-                  <p className="text-xs text-zinc-500 mb-1">50% CI</p>
-                  <p className="text-sm font-mono text-zinc-300">
-                    {currency}{(pred.ci_50_lower ?? 0).toFixed(2)} - {currency}{(pred.ci_50_upper ?? 0).toFixed(2)}
-                  </p>
-                </div>
-                <div className="p-3 rounded-xl bg-white/5">
-                  <p className="text-xs text-zinc-500 mb-1">80% CI</p>
-                  <p className="text-sm font-mono text-zinc-300">
-                    {currency}{(pred.ci_80_lower ?? 0).toFixed(2)} - {currency}{(pred.ci_80_upper ?? 0).toFixed(2)}
-                  </p>
-                </div>
-                <div className="p-3 rounded-xl bg-white/5">
-                  <p className="text-xs text-zinc-500 mb-1">95% CI</p>
-                  <p className="text-sm font-mono text-zinc-300">
-                    {currency}{(pred.ci_95_lower ?? 0).toFixed(2)} - {currency}{(pred.ci_95_upper ?? 0).toFixed(2)}
-                  </p>
-                </div>
-                {pred.price_error_percent !== undefined && pred.price_error_percent !== null && (
-                  <div className="p-3 rounded-xl bg-white/5">
-                    <p className="text-xs text-zinc-500 mb-1">Error</p>
-                    <p className={`text-sm font-mono ${
-                      Math.abs(pred.price_error_percent) < 1 ? 'text-green-400' : 'text-yellow-400'
-                    }`}>
-                      {pred.price_error_percent >= 0 ? '+' : ''}{pred.price_error_percent.toFixed(3)}%
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
