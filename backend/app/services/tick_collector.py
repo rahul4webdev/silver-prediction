@@ -108,18 +108,23 @@ class TickCollector:
             await asyncio.sleep(60)
             return
 
-        access_token = upstox_client.access_token
-
-        # Connect to WebSocket
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-        }
+        # Get authorized WebSocket URL from Upstox
+        try:
+            ws_auth_data = await upstox_client.get_websocket_auth()
+            ws_url = ws_auth_data.get("authorizedRedirectUri")
+            if not ws_url:
+                logger.error("Could not get authorized WebSocket URL from Upstox")
+                await asyncio.sleep(60)
+                return
+            logger.info(f"Got authorized WebSocket URL")
+        except Exception as e:
+            logger.error(f"Failed to get WebSocket authorization: {e}")
+            await asyncio.sleep(60)
+            return
 
         try:
             async with websockets.connect(
-                self.UPSTOX_WS_URL,
-                extra_headers=headers,
+                ws_url,
                 ping_interval=30,
                 ping_timeout=10,
             ) as ws:
