@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.price_data import PriceData
@@ -268,49 +269,71 @@ class DataSyncService:
         interval: str,
     ) -> int:
         """
-        Insert price data into the database.
+        Insert price data into the database using upsert (INSERT ... ON CONFLICT DO UPDATE).
 
-        Uses bulk insert with ON CONFLICT DO NOTHING for efficiency.
+        This handles duplicates gracefully by updating existing records.
         """
         if df.empty:
             return 0
 
-        # Prepare records
+        # Prepare records as dicts for bulk upsert
         records = []
         for _, row in df.iterrows():
             timestamp = row.get("timestamp") or row.get("date") or row.get("datetime")
             if timestamp is None:
                 continue
 
-            # Ensure timestamp is timezone-aware
-            if hasattr(timestamp, "tzinfo") and timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=None)
+            # Convert pandas Timestamp to Python datetime
+            if hasattr(timestamp, "to_pydatetime"):
+                timestamp = timestamp.to_pydatetime()
 
-            record = PriceData(
-                asset=asset,
-                market=market,
-                interval=interval,
-                timestamp=timestamp,
-                open=float(row["open"]) if pd.notna(row.get("open")) else None,
-                high=float(row["high"]) if pd.notna(row.get("high")) else None,
-                low=float(row["low"]) if pd.notna(row.get("low")) else None,
-                close=float(row["close"]) if pd.notna(row.get("close")) else None,
-                volume=int(row["volume"]) if pd.notna(row.get("volume")) else 0,
-            )
+            record = {
+                "asset": asset,
+                "market": market,
+                "interval": interval,
+                "timestamp": timestamp,
+                "open": float(row["open"]) if pd.notna(row.get("open")) else None,
+                "high": float(row["high"]) if pd.notna(row.get("high")) else None,
+                "low": float(row["low"]) if pd.notna(row.get("low")) else None,
+                "close": float(row["close"]) if pd.notna(row.get("close")) else None,
+                "volume": int(row["volume"]) if pd.notna(row.get("volume")) else 0,
+                "created_at": datetime.now(),
+                "source": market,
+            }
             records.append(record)
 
-        # Bulk insert
-        for record in records:
-            try:
-                db.add(record)
-            except Exception:
-                # Record might already exist
-                await db.rollback()
-                continue
+        if not records:
+            return 0
+
+        # Use PostgreSQL INSERT ... ON CONFLICT DO UPDATE (upsert)
+        # This handles duplicates by updating the existing record
+        inserted_count = 0
+        batch_size = 500  # Insert in batches to avoid memory issues
+
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+
+            stmt = pg_insert(PriceData).values(batch)
+
+            # On conflict, update the price data (keeps the latest values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["asset", "market", "interval", "timestamp"],
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "created_at": stmt.excluded.created_at,
+                    "source": stmt.excluded.source,
+                }
+            )
+
+            await db.execute(stmt)
+            inserted_count += len(batch)
 
         await db.commit()
-
-        return len(records)
+        return inserted_count
 
     async def get_sync_status(
         self,
