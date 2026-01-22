@@ -1,0 +1,23 @@
+[Unit]
+Description=Silver Prediction Tick Collector (Upstox WebSocket)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/predictionapi.gahfaudio.in/public_html/backend
+Environment="PATH=/home/predictionapi.gahfaudio.in/public_html/venv/bin:/usr/bin"
+Environment="PYTHONPATH=/home/predictionapi.gahfaudio.in/public_html/backend"
+ExecStart=/home/predictionapi.gahfaudio.in/public_html/venv/bin/python -m workers.tick_collector_worker
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/tick-collector.log
+StandardError=append:/var/log/tick-collector.log
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
