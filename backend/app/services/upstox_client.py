@@ -199,9 +199,10 @@ class UpstoxClient:
         # Filter by exchange
         filtered = [i for i in instruments if i.get("exchange") == exchange]
 
-        # Cache instruments
+        # Cache instruments - use trading_symbol (Upstox's field name)
         for instrument in filtered:
-            key = f"{instrument.get('exchange')}:{instrument.get('tradingsymbol')}"
+            trading_symbol = instrument.get("trading_symbol") or instrument.get("tradingsymbol", "")
+            key = f"{instrument.get('exchange')}:{trading_symbol}"
             self._instruments_cache[key] = instrument
 
         return filtered
@@ -221,43 +222,55 @@ class UpstoxClient:
         now = datetime.now()
 
         for key, instrument in self._instruments_cache.items():
-            tradingsymbol = instrument.get("tradingsymbol", "")
+            # Upstox uses 'trading_symbol' (with underscore) not 'tradingsymbol'
+            trading_symbol = instrument.get("trading_symbol", "") or instrument.get("tradingsymbol", "")
             instrument_type = instrument.get("instrument_type", "")
+            name = instrument.get("name", "")
+            asset_symbol = instrument.get("asset_symbol", "")
 
-            # Look for SILVERM (Silver Mini) futures
-            if "SILVERM" in tradingsymbol and instrument_type == "FUT":
-                # Check expiry if available
-                expiry_str = instrument.get("expiry")
-                if expiry_str:
+            # Look for SILVERM (Silver Mini) futures - check name, asset_symbol, or trading_symbol
+            is_silver_mini = (
+                "SILVERM" in trading_symbol.upper() or
+                asset_symbol == "SILVERM" or
+                (name == "SILVER" and "SILVERM" in asset_symbol)
+            )
+
+            if is_silver_mini and instrument_type == "FUT":
+                # Check expiry - can be milliseconds timestamp or ISO string
+                expiry_val = instrument.get("expiry")
+                expiry = None
+
+                if expiry_val:
                     try:
-                        expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
-                        if expiry > now:
-                            silver_futures.append({
-                                "instrument_key": instrument.get("instrument_key"),
-                                "tradingsymbol": tradingsymbol,
-                                "expiry": expiry,
-                            })
-                    except ValueError:
+                        if isinstance(expiry_val, (int, float)):
+                            # Milliseconds timestamp
+                            expiry = datetime.fromtimestamp(expiry_val / 1000)
+                        elif isinstance(expiry_val, str):
+                            expiry = datetime.fromisoformat(expiry_val.replace("Z", "+00:00"))
+                    except (ValueError, OSError):
                         pass
-                else:
+
+                if expiry is None or expiry > now:
                     silver_futures.append({
                         "instrument_key": instrument.get("instrument_key"),
-                        "tradingsymbol": tradingsymbol,
-                        "expiry": None,
+                        "trading_symbol": trading_symbol,
+                        "expiry": expiry,
+                        "name": name,
                     })
 
         # Sort by expiry and return nearest
         if silver_futures:
             silver_futures.sort(key=lambda x: x["expiry"] or datetime.max)
             selected = silver_futures[0]
-            logger.info(f"Selected MCX Silver: {selected['tradingsymbol']} (key: {selected['instrument_key']})")
+            logger.info(f"Selected MCX Silver: {selected['trading_symbol']} (key: {selected['instrument_key']})")
             return selected["instrument_key"]
 
-        # Fallback: Look for any SILVER futures
+        # Fallback: Look for any SILVER futures (not just SILVERM)
         for key, instrument in self._instruments_cache.items():
-            tradingsymbol = instrument.get("tradingsymbol", "")
-            if "SILVER" in tradingsymbol and instrument.get("instrument_type") == "FUT":
-                logger.info(f"Fallback MCX Silver: {tradingsymbol}")
+            trading_symbol = instrument.get("trading_symbol", "") or instrument.get("tradingsymbol", "")
+            name = instrument.get("name", "")
+            if (name == "SILVER" or "SILVER" in trading_symbol.upper()) and instrument.get("instrument_type") == "FUT":
+                logger.info(f"Fallback MCX Silver: {trading_symbol}")
                 return instrument.get("instrument_key")
 
         logger.warning("Silver instrument not found in MCX instruments")

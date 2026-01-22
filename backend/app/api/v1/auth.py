@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth")
 
 # Path to .env file for token persistence
-ENV_FILE_PATH = Path(__file__).parent.parent.parent.parent.parent / ".env"
+# The backend loads from backend/.env, so save there
+ENV_FILE_PATH = Path(__file__).parent.parent.parent.parent / ".env"
 
 
 @router.get("/status")
