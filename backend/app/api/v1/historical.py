@@ -408,7 +408,7 @@ async def get_price_stats(
     asset: str,
     market: str,
     interval: str = Query("30m"),
-    period_days: int = Query(30, le=365),
+    period_days: int = Query(30, le=730),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -518,7 +518,7 @@ async def sync_historical_data(
     asset: str,
     market: str,
     interval: str = Query("30m", description="Candle interval"),
-    days: int = Query(60, le=365, description="Days of history to sync"),
+    days: int = Query(60, le=730, description="Days of history to sync"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -555,13 +555,14 @@ async def sync_historical_data(
 
 @router.post("/sync-all")
 async def sync_all_data(
-    days: int = Query(60, le=365, description="Days of history to sync"),
+    days: int = Query(60, le=730, description="Days of history to sync (max 2 years)"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Sync all historical data (silver for both MCX and COMEX, all intervals).
 
     This is useful for initial data loading.
+    Note: Upstox provides ~1 year of 30m data, Yahoo Finance provides more for COMEX.
     """
     from app.services.data_sync import data_sync_service
 
@@ -594,7 +595,7 @@ async def sync_all_data(
 
 @router.get("/factors")
 async def get_market_factors(
-    period_days: int = Query(30, le=365),
+    period_days: int = Query(30, le=730),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
