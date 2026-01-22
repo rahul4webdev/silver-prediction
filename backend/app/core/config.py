@@ -88,15 +88,11 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Construct async database URL with SSL disabled for local connections."""
-        base_url = (
+        """Construct async database URL."""
+        return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
-        # Disable SSL for local connections to avoid hostname resolution issues
-        if self.postgres_host in ("127.0.0.1", "localhost"):
-            return f"{base_url}?ssl=disable"
-        return base_url
 
     @property
     def sync_database_url(self) -> str:

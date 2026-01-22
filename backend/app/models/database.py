@@ -18,13 +18,19 @@ class Base(DeclarativeBase):
     pass
 
 
-# Create async engine
+# Create async engine with SSL disabled for local connections
+# asyncpg has issues with SSL hostname resolution on localhost
+connect_args = {}
+if settings.postgres_host in ("127.0.0.1", "localhost"):
+    connect_args["ssl"] = False
+
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    connect_args=connect_args,
 )
 
 # Create session factory
