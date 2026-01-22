@@ -43,6 +43,9 @@ export default function RootLayout({
               <a href="/accuracy" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                 Accuracy
               </a>
+              <a href="/sentiment" className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                Sentiment
+              </a>
             </div>
           </nav>
           <main className="p-4">
