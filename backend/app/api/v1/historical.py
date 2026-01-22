@@ -20,6 +20,103 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/historical")
 
 
+@router.get("/live/{asset}")
+async def get_live_price(
+    asset: str,
+    market: str = Query("comex", description="Market: mcx or comex"),
+) -> Dict[str, Any]:
+    """
+    Get live/current price from Yahoo Finance.
+
+    For MCX silver, this first tries Silver Bees ETF (actual INR prices),
+    then falls back to COMEX silver with USD/INR conversion.
+    """
+    try:
+        # For MCX silver, use dedicated method
+        if market == "mcx" and asset == "silver":
+            try:
+                mcx_price = await yahoo_client.get_silver_price_inr()
+                if mcx_price and mcx_price.get("price"):
+                    return {
+                        "asset": asset,
+                        "market": market,
+                        "symbol": mcx_price.get("symbol"),
+                        "price": mcx_price["price"],
+                        "price_per_gram": mcx_price.get("price_per_gram"),
+                        "currency": "INR",
+                        "change": mcx_price.get("change"),
+                        "change_percent": mcx_price.get("change_percent"),
+                        "timestamp": datetime.now().isoformat(),
+                        "source": mcx_price.get("source", "yahoo_finance"),
+                        "note": "Price per kg. Silver Bees ETF is used as MCX proxy.",
+                    }
+            except Exception as e:
+                logger.warning(f"MCX silver price fetch failed: {e}")
+
+        # Standard approach for COMEX or fallback
+        price_info = await yahoo_client.get_current_price(asset)
+
+        if not price_info or not price_info.get("price"):
+            return {
+                "status": "error",
+                "message": "Could not fetch price",
+                "asset": asset,
+                "market": market,
+            }
+
+        price = price_info["price"]
+        change = price_info.get("change")
+        change_percent = price_info.get("change_percent")
+        high = price_info.get("high") or price
+        low = price_info.get("low") or price
+        open_price = price_info.get("open") or price
+        prev_close = price_info.get("previous_close")
+        source = "yahoo_finance"
+
+        # Convert to INR for MCX
+        if market == "mcx":
+            try:
+                USD_TO_INR = await yahoo_client.get_usdinr_rate()
+            except Exception:
+                USD_TO_INR = 83.5
+            # Convert per oz to per kg: 1 kg = 32.1507 troy oz
+            conversion = USD_TO_INR * 32.1507
+            price = round(price * conversion, 2)
+            high = round(high * conversion, 2)
+            low = round(low * conversion, 2)
+            open_price = round(open_price * conversion, 2)
+            if prev_close:
+                prev_close = round(prev_close * conversion, 2)
+            if change:
+                change = round(change * conversion, 2)
+            source = "comex_converted"
+
+        return {
+            "asset": asset,
+            "market": market,
+            "symbol": price_info.get("symbol"),
+            "price": price,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "previous_close": prev_close,
+            "change": change,
+            "change_percent": change_percent,
+            "volume": price_info.get("volume"),
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "currency": "INR" if market == "mcx" else "USD",
+        }
+    except Exception as e:
+        logger.error(f"Live price fetch failed: {e}")
+        return {
+            "status": "error",
+            "message": f"Failed to fetch price: {str(e)}",
+            "asset": asset,
+            "market": market,
+        }
+
+
 @router.get("/{asset}/{market}")
 async def get_historical_data(
     asset: str,
@@ -463,101 +560,4 @@ async def get_market_factors(
             "period_days": period_days,
             "factors": {},
             "message": f"No data available: {str(e)}",
-        }
-
-
-@router.get("/live/{asset}")
-async def get_live_price(
-    asset: str,
-    market: str = Query("comex", description="Market: mcx or comex"),
-) -> Dict[str, Any]:
-    """
-    Get live/current price from Yahoo Finance.
-
-    For MCX silver, this first tries Silver Bees ETF (actual INR prices),
-    then falls back to COMEX silver with USD/INR conversion.
-    """
-    try:
-        # For MCX silver, use dedicated method
-        if market == "mcx" and asset == "silver":
-            try:
-                mcx_price = await yahoo_client.get_silver_price_inr()
-                if mcx_price and mcx_price.get("price"):
-                    return {
-                        "asset": asset,
-                        "market": market,
-                        "symbol": mcx_price.get("symbol"),
-                        "price": mcx_price["price"],
-                        "price_per_gram": mcx_price.get("price_per_gram"),
-                        "currency": "INR",
-                        "change": mcx_price.get("change"),
-                        "change_percent": mcx_price.get("change_percent"),
-                        "timestamp": datetime.now().isoformat(),
-                        "source": mcx_price.get("source", "yahoo_finance"),
-                        "note": "Price per kg. Silver Bees ETF is used as MCX proxy.",
-                    }
-            except Exception as e:
-                logger.warning(f"MCX silver price fetch failed: {e}")
-
-        # Standard approach for COMEX or fallback
-        price_info = await yahoo_client.get_current_price(asset)
-
-        if not price_info or not price_info.get("price"):
-            return {
-                "status": "error",
-                "message": "Could not fetch price",
-                "asset": asset,
-                "market": market,
-            }
-
-        price = price_info["price"]
-        change = price_info.get("change")
-        change_percent = price_info.get("change_percent")
-        high = price_info.get("high") or price
-        low = price_info.get("low") or price
-        open_price = price_info.get("open") or price
-        prev_close = price_info.get("previous_close")
-        source = "yahoo_finance"
-
-        # Convert to INR for MCX
-        if market == "mcx":
-            try:
-                USD_TO_INR = await yahoo_client.get_usdinr_rate()
-            except Exception:
-                USD_TO_INR = 83.5
-            # Convert per oz to per kg: 1 kg = 32.1507 troy oz
-            conversion = USD_TO_INR * 32.1507
-            price = round(price * conversion, 2)
-            high = round(high * conversion, 2)
-            low = round(low * conversion, 2)
-            open_price = round(open_price * conversion, 2)
-            if prev_close:
-                prev_close = round(prev_close * conversion, 2)
-            if change:
-                change = round(change * conversion, 2)
-            source = "comex_converted"
-
-        return {
-            "asset": asset,
-            "market": market,
-            "symbol": price_info.get("symbol"),
-            "price": price,
-            "open": open_price,
-            "high": high,
-            "low": low,
-            "previous_close": prev_close,
-            "change": change,
-            "change_percent": change_percent,
-            "volume": price_info.get("volume"),
-            "timestamp": datetime.now().isoformat(),
-            "source": source,
-            "currency": "INR" if market == "mcx" else "USD",
-        }
-    except Exception as e:
-        logger.error(f"Live price fetch failed: {e}")
-        return {
-            "status": "error",
-            "message": f"Failed to fetch price: {str(e)}",
-            "asset": asset,
-            "market": market,
         }
