@@ -241,7 +241,7 @@ SILVER_FACTORS = {
 UPSTOX_CONFIG = {
     "auth_url": "https://api.upstox.com/v2/login/authorization/dialog",
     "token_url": "https://api.upstox.com/v2/login/authorization/token",
-    "websocket_auth_url": "https://api.upstox.com/v2/feed/market-data-feed/authorize",
+    "websocket_auth_url": "https://api.upstox.com/v3/feed/market-data-feed/authorize",
     "historical_candle_url": "https://api.upstox.com/v2/historical-candle",
     "instruments_url": "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz",
 
