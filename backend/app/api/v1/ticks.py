@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.models.database import get_db
 from app.models.tick_data import TickData, TickDataAggregated
 from app.services.tick_collector import tick_collector
 
