@@ -151,8 +151,11 @@ class EnsemblePredictor:
         """
         Update model weights based on training performance.
 
-        Uses direction accuracy and MAPE as metrics.
-        Models with MAPE > 100% are considered unreliable and get minimal weight.
+        For returns-based models, we focus on:
+        1. Direction accuracy (most important for trading)
+        2. MAE (mean absolute error on return predictions)
+
+        Models predicting returns will have MAE in percentage points (e.g., 0.5%).
         """
         scores = {}
 
@@ -161,21 +164,30 @@ class EnsemblePredictor:
                 scores[model_name] = 0.0  # Zero weight for failed models
             else:
                 direction_accuracy = metrics.get("direction_accuracy", 0.5)
-                mape = metrics.get("mape", 100.0)
+                mae = metrics.get("mae", 1.0)  # MAE in percentage points for returns
 
-                # If MAPE > 50%, heavily penalize this model
-                # This prevents poorly calibrated models from ruining ensemble
-                if mape > 50:
-                    score = 0.01  # Minimal weight
-                    logger.warning(f"{model_name} has MAPE={mape:.1f}%, setting minimal weight")
-                else:
-                    # Score based on direction accuracy and error
-                    # Higher direction accuracy = higher score
-                    # Lower MAPE = higher score
-                    mape_score = max(0, 1 - mape / 50)  # 0% MAPE = 1.0, 50% MAPE = 0.0
-                    score = 0.5 * direction_accuracy + 0.5 * mape_score
+                # For direction-based trading, direction accuracy is paramount
+                # A model with 55% direction accuracy is valuable
+                # A model with <50% direction accuracy is worse than random
+
+                # Direction score: 50% accuracy = 0, 60% = 0.5, 70% = 1.0
+                direction_score = max(0, (direction_accuracy - 0.5) * 5)  # Scale 0.5-0.7 to 0-1
+
+                # MAE score: For returns, MAE < 1% is good, > 2% is poor
+                # 0% MAE = 1.0, 1% MAE = 0.5, 2% MAE = 0
+                mae_score = max(0, 1 - mae / 2)
+
+                # Weight direction accuracy more heavily (70%) than MAE (30%)
+                score = 0.7 * direction_score + 0.3 * mae_score
+
+                # Models with direction accuracy < 50% get minimal weight
+                if direction_accuracy < 0.5:
+                    score = 0.01
+                    logger.warning(f"{model_name} has direction_accuracy={direction_accuracy:.1%}, setting minimal weight")
 
                 scores[model_name] = max(score, 0.01)  # Minimum 1% weight
+
+                logger.info(f"{model_name}: direction={direction_accuracy:.1%}, MAE={mae:.4f}%, score={score:.3f}")
 
         # Normalize to sum to 1
         total = sum(scores.values())
