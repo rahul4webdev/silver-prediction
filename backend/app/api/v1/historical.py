@@ -521,6 +521,45 @@ async def sync_historical_data(
         }
 
 
+@router.post("/sync-all")
+async def sync_all_data(
+    days: int = Query(60, le=365, description="Days of history to sync"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Sync all historical data (silver for both MCX and COMEX, all intervals).
+
+    This is useful for initial data loading.
+    """
+    from app.services.data_sync import data_sync_service
+
+    results = {}
+    intervals = ["30m", "1h", "4h", "1d"]
+
+    for market in ["comex", "mcx"]:
+        for interval in intervals:
+            key = f"{market}_{interval}"
+            try:
+                if market == "comex":
+                    result = await data_sync_service.sync_comex_data(
+                        db, "silver", interval, days
+                    )
+                else:
+                    result = await data_sync_service.sync_mcx_data(
+                        db, "silver", interval, days
+                    )
+                results[key] = result
+            except Exception as e:
+                logger.error(f"Sync failed for {key}: {e}")
+                results[key] = {"status": "error", "error": str(e)}
+
+    return {
+        "status": "complete",
+        "days": days,
+        "results": results,
+    }
+
+
 @router.get("/factors")
 async def get_market_factors(
     period_days: int = Query(30, le=365),
