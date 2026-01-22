@@ -2,21 +2,36 @@
 Application configuration using Pydantic Settings.
 Loads environment variables and provides typed configuration.
 
-Configuration is loaded from environment variables and .env file at application startup.
+Configuration is loaded from environment variables and the parent .env file.
+The parent .env file is at /project-root/.env (one level above backend/).
+
+IMPORTANT: UPSTOX_ACCESS_TOKEN should NOT be in GitHub secrets.
+It's obtained via OAuth and saved to .env by the /auth/callback endpoint.
+Tokens expire daily at midnight IST and need to be refreshed via OAuth.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Determine the path to the main .env file
+# Backend runs from /path/to/project/backend, .env is at /path/to/project/.env
+BACKEND_DIR = Path(__file__).parent.parent.parent  # backend/
+PROJECT_ROOT = BACKEND_DIR.parent  # project root
+MAIN_ENV_FILE = PROJECT_ROOT / ".env"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Load from parent .env file only (where GitHub Actions writes other secrets)
+        # UPSTOX_ACCESS_TOKEN is managed separately via OAuth, not GitHub secrets
+        env_file=str(MAIN_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

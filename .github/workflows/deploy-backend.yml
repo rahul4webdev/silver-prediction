@@ -91,7 +91,9 @@ jobs:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
           UPSTOX_API_SECRET: ${{ secrets.UPSTOX_API_SECRET }}
-          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          # NOTE: UPSTOX_ACCESS_TOKEN is NOT passed from secrets
+          # It expires daily and is managed via OAuth refresh on the server
+          # The workflow will preserve any existing token in .env
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
           POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
@@ -104,7 +106,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_SSH_PORT }}
-          envs: SECRET_KEY,UPSTOX_API_KEY,UPSTOX_API_SECRET,UPSTOX_ACCESS_TOKEN,POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,REDIS_HOST,REDIS_PORT
+          envs: SECRET_KEY,UPSTOX_API_KEY,UPSTOX_API_SECRET,POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,REDIS_HOST,REDIS_PORT
           script: |
             set -e
 
@@ -162,12 +164,19 @@ jobs:
             pip install --upgrade pip
             pip install -r backend/requirements.txt
 
-            # Create .env file with fallback to 127.0.0.1 if not set
-            echo "Creating .env file..."
+            # Create/update .env file while PRESERVING existing UPSTOX_ACCESS_TOKEN
+            echo "Creating/updating .env file..."
             PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
             PG_PORT="${POSTGRES_PORT:-5432}"
             RD_HOST="${REDIS_HOST:-127.0.0.1}"
             RD_PORT="${REDIS_PORT:-6379}"
+
+            # Preserve existing UPSTOX_ACCESS_TOKEN if present
+            EXISTING_TOKEN=""
+            if [ -f .env ]; then
+              EXISTING_TOKEN=$(grep "^UPSTOX_ACCESS_TOKEN=" .env | cut -d'=' -f2- || true)
+              echo "Preserving existing UPSTOX_ACCESS_TOKEN: ${EXISTING_TOKEN:0:50}..."
+            fi
 
             cat > .env << ENVEOF
             ENVIRONMENT=production
@@ -176,7 +185,7 @@ jobs:
             UPSTOX_API_KEY=${UPSTOX_API_KEY}
             UPSTOX_API_SECRET=${UPSTOX_API_SECRET}
             UPSTOX_REDIRECT_URI=https://predictionapi.gahfaudio.in/api/v1/auth/callback
-            UPSTOX_ACCESS_TOKEN=${UPSTOX_ACCESS_TOKEN}
+            UPSTOX_ACCESS_TOKEN=${EXISTING_TOKEN}
             POSTGRES_HOST=${PG_HOST}
             POSTGRES_PORT=${PG_PORT}
             POSTGRES_DB=${POSTGRES_DB:-silver_prediction}
@@ -197,7 +206,8 @@ jobs:
             # Remove leading whitespace from .env
             sed -i 's/^[[:space:]]*//' .env
 
-            # Copy .env to backend directory as well (systemd runs from there)
+            # Note: backend/.env is no longer needed since config reads from parent .env
+            # But we keep it for backwards compatibility
             cp .env backend/.env
 
             # Copy systemd service files

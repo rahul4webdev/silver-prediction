@@ -18,9 +18,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
 
-# Path to .env file for token persistence
-# The backend loads from backend/.env, so save there
-ENV_FILE_PATH = Path(__file__).parent.parent.parent.parent / ".env"
+# Path to main .env file for token persistence
+# Token is saved to parent .env (same location GitHub Actions writes to)
+# UPSTOX_ACCESS_TOKEN should NOT be in GitHub secrets - it's managed via OAuth
+BACKEND_DIR = Path(__file__).parent.parent.parent.parent  # backend/
+PROJECT_ROOT = BACKEND_DIR.parent  # project root
+MAIN_ENV_FILE = PROJECT_ROOT / ".env"
 
 
 @router.get("/status")
@@ -112,16 +115,30 @@ async def upstox_login(
 
 
 def _update_env_file(token: str) -> bool:
-    """Update UPSTOX_ACCESS_TOKEN in .env file."""
+    """
+    Update UPSTOX_ACCESS_TOKEN in the main .env file.
+
+    The token is saved to the parent .env file which is the same location
+    that GitHub Actions writes other secrets to. This ensures consistency.
+
+    IMPORTANT: UPSTOX_ACCESS_TOKEN should NOT be in GitHub secrets.
+    It expires daily and is managed via OAuth refresh.
+    """
     try:
-        env_path = ENV_FILE_PATH
+        # Determine the .env path
+        env_path = MAIN_ENV_FILE
+
+        # In production, use the known path
         if not env_path.exists():
-            # Try alternative path
-            env_path = Path("/home/predictionapi.gahfaudio.in/public_html/.env")
+            prod_path = Path("/home/predictionapi.gahfaudio.in/public_html/.env")
+            if prod_path.exists() or prod_path.parent.exists():
+                env_path = prod_path
 
         if not env_path.exists():
-            logger.warning(f".env file not found at {env_path}")
-            return False
+            # Create the file with just the token
+            env_path.write_text(f"UPSTOX_ACCESS_TOKEN={token}\n")
+            logger.info(f"Created {env_path} with UPSTOX_ACCESS_TOKEN")
+            return True
 
         # Read current content
         content = env_path.read_text()
