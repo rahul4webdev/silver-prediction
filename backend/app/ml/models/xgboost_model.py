@@ -1,6 +1,10 @@
 """
 XGBoost model for feature-based prediction.
 Provides interpretable feature importance and handles non-linear relationships.
+
+NOTE: This model predicts percentage returns, not absolute prices.
+This works better for commodities like silver where the absolute
+price level changes over time.
 """
 
 import logging
@@ -23,11 +27,15 @@ class XGBoostModel(BaseModel):
     """
     XGBoost model for price prediction.
 
+    Predicts percentage returns instead of absolute prices for better
+    performance on commodities.
+
     Strengths:
     - Handles non-linear relationships
     - Provides feature importance
     - Fast training and inference
     - Robust to overfitting with proper tuning
+    - Returns-based prediction normalizes across different price levels
 
     Limitations:
     - Doesn't capture sequential patterns directly
@@ -62,66 +70,115 @@ class XGBoostModel(BaseModel):
         self.scaler: Optional[StandardScaler] = None
         self.feature_columns: List[str] = []
         self.feature_importance: Dict[str, float] = {}
+        self._last_price: Optional[float] = None
 
-    def _create_lag_features(
+    def _create_return_features(
         self,
         df: pd.DataFrame,
         target_col: str = "close",
-    ) -> pd.DataFrame:
+    ) -> Tuple[pd.DataFrame, np.ndarray, float]:
         """
-        Create lag features for prediction.
+        Create return-based features for prediction.
+
+        Returns features based on percentage returns, not absolute prices.
+        This normalizes the data across different price levels.
+
+        Returns:
+            df_features: DataFrame with return-based features
+            target_returns: Array of target returns (percentage)
+            last_price: Last price in the data
         """
         result = df.copy()
+        prices = result[target_col].values
+        last_price = float(prices[-1])
 
-        # Price lags
+        # Calculate target returns (what we want to predict)
+        # Returns[i] = (Price[i+1] - Price[i]) / Price[i] * 100
+        # We shift by -1 to get next period's return as target
+        target_returns = np.zeros(len(prices))
+        target_returns[:-1] = np.diff(prices) / prices[:-1] * 100
+        target_returns[-1] = 0  # Last row has no next return
+
+        # Historical return lags
         for i in range(1, self.lookback_periods + 1):
-            result[f"close_lag_{i}"] = result[target_col].shift(i)
-            result[f"return_lag_{i}"] = result[target_col].pct_change(i)
+            result[f"return_lag_{i}"] = result[target_col].pct_change(i) * 100
 
-        # Rolling statistics
+        # Rolling return statistics
+        returns = result[target_col].pct_change() * 100
         for window in [5, 10, 20]:
-            result[f"rolling_mean_{window}"] = result[target_col].rolling(window).mean()
-            result[f"rolling_std_{window}"] = result[target_col].rolling(window).std()
-            result[f"rolling_min_{window}"] = result[target_col].rolling(window).min()
-            result[f"rolling_max_{window}"] = result[target_col].rolling(window).max()
+            result[f"return_mean_{window}"] = returns.rolling(window).mean()
+            result[f"return_std_{window}"] = returns.rolling(window).std()
+            result[f"return_min_{window}"] = returns.rolling(window).min()
+            result[f"return_max_{window}"] = returns.rolling(window).max()
 
-        # Price relative to moving averages
-        if "sma_20" in df.columns:
-            result["price_to_sma_20"] = result[target_col] / result["sma_20"]
-        if "sma_50" in df.columns:
-            result["price_to_sma_50"] = result[target_col] / result["sma_50"]
+        # Price position relative to rolling range (normalized 0-1)
+        for window in [10, 20]:
+            rolling_min = result[target_col].rolling(window).min()
+            rolling_max = result[target_col].rolling(window).max()
+            rolling_range = rolling_max - rolling_min
+            result[f"price_position_{window}"] = (result[target_col] - rolling_min) / (rolling_range + 1e-8)
 
-        # Volatility features
-        result["daily_range"] = (result["high"] - result["low"]) / result[target_col]
-        result["daily_return"] = result[target_col].pct_change()
+        # Volatility features (normalized)
+        result["daily_range_pct"] = (result["high"] - result["low"]) / result[target_col] * 100
+        result["daily_return"] = result[target_col].pct_change() * 100
+
+        # Volume change (if available)
+        if "volume" in result.columns:
+            result["volume_change_pct"] = result["volume"].pct_change() * 100
+            result["volume_change_pct"] = result["volume_change_pct"].clip(-100, 100)
+
+        # Technical indicators (if available) - convert to relative form
+        if "rsi_14" in result.columns:
+            result["rsi_centered"] = result["rsi_14"] - 50  # Center around 0
+
+        if "macd" in result.columns and "close" in result.columns:
+            # Normalize MACD by price
+            result["macd_pct"] = result["macd"] / result[target_col] * 100
+
+        # Bollinger band position (already normalized)
+        if "bb_upper" in result.columns and "bb_lower" in result.columns:
+            bb_range = result["bb_upper"] - result["bb_lower"]
+            result["bb_position"] = (result[target_col] - result["bb_lower"]) / (bb_range + 1e-8)
 
         # Time features (if timestamp available)
         if "timestamp" in result.columns:
             ts = pd.to_datetime(result["timestamp"])
             result["hour"] = ts.dt.hour
             result["day_of_week"] = ts.dt.dayofweek
-            result["day_of_month"] = ts.dt.day
-            result["month"] = ts.dt.month
+            # Normalize time features
+            result["hour_sin"] = np.sin(2 * np.pi * result["hour"] / 24)
+            result["hour_cos"] = np.cos(2 * np.pi * result["hour"] / 24)
+            result["dow_sin"] = np.sin(2 * np.pi * result["day_of_week"] / 7)
+            result["dow_cos"] = np.cos(2 * np.pi * result["day_of_week"] / 7)
 
-        return result
+        return result, target_returns, last_price
 
     def _prepare_features(
         self,
         df: pd.DataFrame,
         target_col: str = "close",
         is_training: bool = True,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Prepare features for XGBoost.
+
+        Returns:
+            X: Feature matrix
+            y: Target returns (percentage)
+            last_price: Last price in data
         """
-        # Create lag features
-        df_features = self._create_lag_features(df, target_col)
+        # Create return-based features
+        df_features, target_returns, last_price = self._create_return_features(df, target_col)
 
         # Drop rows with NaN (from lag creation)
-        df_features = df_features.dropna()
+        valid_mask = ~df_features.isna().any(axis=1)
 
-        # Select feature columns (exclude target and non-features)
-        exclude_cols = ["timestamp", "date", "id", target_col]
+        # Select feature columns (exclude non-features)
+        exclude_cols = [
+            "timestamp", "date", "id", target_col,
+            "open", "high", "low", "close", "volume",  # Raw prices
+            "hour", "day_of_week", "day_of_month", "month",  # Raw time (use sin/cos instead)
+        ]
         feature_cols = [c for c in df_features.columns if c not in exclude_cols]
 
         # Filter to numeric columns only
@@ -130,11 +187,15 @@ class XGBoostModel(BaseModel):
         if is_training:
             self.feature_columns = feature_cols
 
-        # Extract features and target
-        X = df_features[self.feature_columns].values
-        y = df_features[target_col].values
+        # Apply valid mask
+        df_features = df_features[valid_mask]
+        target_returns = target_returns[valid_mask.values]
 
-        return X, y
+        # Extract features
+        X = df_features[self.feature_columns].values
+        y = target_returns
+
+        return X, y, last_price
 
     def train(
         self,
@@ -143,7 +204,7 @@ class XGBoostModel(BaseModel):
         validation_split: float = 0.2,
     ) -> Dict[str, float]:
         """
-        Train XGBoost model.
+        Train XGBoost model on percentage returns.
 
         Args:
             df: DataFrame with features
@@ -153,10 +214,14 @@ class XGBoostModel(BaseModel):
         Returns:
             Training metrics
         """
-        logger.info(f"Training XGBoost model on {len(df)} samples")
+        logger.info(f"Training XGBoost model on {len(df)} samples (using returns)")
 
         # Prepare features
-        X, y = self._prepare_features(df, target_col, is_training=True)
+        X, y, self._last_price = self._prepare_features(df, target_col, is_training=True)
+
+        # Remove last row (target return is 0/unknown)
+        X = X[:-1]
+        y = y[:-1]
 
         # Scale features
         self.scaler = StandardScaler()
@@ -193,32 +258,39 @@ class XGBoostModel(BaseModel):
             col: float(imp) for col, imp in zip(self.feature_columns, importance)
         }
 
-        # Calculate validation metrics
+        # Calculate validation metrics on returns
         y_pred = self.model.predict(X_val)
 
+        # MAE on returns (percentage points)
         mae = np.mean(np.abs(y_pred - y_val))
-        rmse = np.sqrt(np.mean((y_pred - y_val) ** 2))
-        mape = np.mean(np.abs((y_val - y_pred) / y_val)) * 100
 
-        # Direction accuracy
-        direction_actual = np.sign(np.diff(y_val))
-        direction_pred = np.sign(np.diff(y_pred))
+        # RMSE on returns
+        rmse = np.sqrt(np.mean((y_pred - y_val) ** 2))
+
+        # MAPE relative to mean return magnitude
+        mean_return_mag = np.mean(np.abs(y_val))
+        mape = (mae / mean_return_mag * 100) if mean_return_mag > 0 else 100
+
+        # Direction accuracy - this is what matters most
+        direction_actual = np.sign(y_val)
+        direction_pred = np.sign(y_pred)
         direction_accuracy = np.mean(direction_actual == direction_pred)
 
         self.training_metrics = {
             "mae": float(mae),
             "rmse": float(rmse),
-            "mape": float(mape),
+            "mape": float(mape),  # Relative to mean return magnitude
             "direction_accuracy": float(direction_accuracy),
             "train_samples": len(X_train),
             "val_samples": len(X_val),
             "n_features": len(self.feature_columns),
+            "prediction_type": "returns",
         }
 
         self.is_trained = True
         self.last_trained = datetime.now()
 
-        logger.info(f"XGBoost training complete. MAPE: {mape:.2f}%, Direction: {direction_accuracy:.2%}")
+        logger.info(f"XGBoost training complete. Direction accuracy: {direction_accuracy:.2%}, MAE: {mae:.4f}%")
         logger.info(f"Top 5 features: {sorted(self.feature_importance.items(), key=lambda x: x[1], reverse=True)[:5]}")
 
         return self.training_metrics
@@ -233,12 +305,12 @@ class XGBoostModel(BaseModel):
         """
         Make prediction with XGBoost.
 
-        Uses early stopping iterations to estimate uncertainty.
+        Predicts return and converts back to price using current_price.
 
         Args:
             df: Recent data with features
-            horizon: Periods ahead (note: XGBoost predicts next period)
-            current_price: Current price for direction
+            horizon: Periods ahead (note: XGBoost predicts next period return)
+            current_price: Current price for conversion and direction
             n_estimators_for_std: Number of estimators for std estimation
 
         Returns:
@@ -248,30 +320,37 @@ class XGBoostModel(BaseModel):
             raise RuntimeError("Model must be trained before prediction")
 
         # Prepare features
-        X, _ = self._prepare_features(df, is_training=False)
+        X, _, last_data_price = self._prepare_features(df, is_training=False)
         X_scaled = self.scaler.transform(X)
 
         # Get last sample for prediction
         X_last = X_scaled[-1:, :]
 
-        # Main prediction
-        predicted_price = float(self.model.predict(X_last)[0])
+        # Use provided current_price or fall back to last price in data
+        if current_price is None:
+            current_price = float(df["close"].iloc[-1])
+
+        # Main prediction (predicted return in percentage)
+        predicted_return = float(self.model.predict(X_last)[0])
 
         # Estimate uncertainty using different numbers of trees
-        predictions = []
+        return_predictions = []
         for n_trees in range(max(10, self.n_estimators - n_estimators_for_std), self.n_estimators + 1, 5):
             pred = float(self.model.predict(X_last, iteration_range=(0, n_trees))[0])
-            predictions.append(pred)
+            return_predictions.append(pred)
 
-        std_dev = float(np.std(predictions)) if len(predictions) > 1 else abs(predicted_price * 0.01)
+        return_std = float(np.std(return_predictions)) if len(return_predictions) > 1 else abs(predicted_return * 0.5)
+
+        # Convert return prediction to price
+        predicted_price = current_price * (1 + predicted_return / 100)
+
+        # Convert return std to price std
+        std_dev = current_price * return_std / 100
 
         # Calculate confidence intervals
         ci_50, ci_80, ci_95 = self.calculate_confidence_intervals(predicted_price, std_dev)
 
         # Determine direction
-        if current_price is None:
-            current_price = float(df["close"].iloc[-1])
-
         direction, direction_prob = self.determine_direction(current_price, predicted_price)
 
         # Calculate target time
@@ -280,7 +359,15 @@ class XGBoostModel(BaseModel):
         else:
             last_time = datetime.now()
 
-        target_time = last_time + timedelta(hours=horizon)
+        # Determine time delta based on data frequency
+        if len(df) > 1 and "timestamp" in df.columns:
+            time_diff = pd.to_datetime(df["timestamp"]).diff().median()
+            if pd.notna(time_diff):
+                target_time = last_time + time_diff * horizon
+            else:
+                target_time = last_time + timedelta(hours=horizon)
+        else:
+            target_time = last_time + timedelta(hours=horizon)
 
         return PredictionResult(
             predicted_price=predicted_price,
@@ -293,7 +380,7 @@ class XGBoostModel(BaseModel):
             model_name=self.model_name,
             prediction_time=datetime.now(),
             target_time=target_time,
-            features_used=self.feature_columns[:10],  # Top 10 features
+            features_used=list(self.feature_importance.keys())[:10] + ["returns"],
         )
 
     def get_feature_importance(self, top_n: int = 20) -> Dict[str, float]:
@@ -319,6 +406,7 @@ class XGBoostModel(BaseModel):
                 "is_trained": self.is_trained,
                 "last_trained": self.last_trained,
                 "training_metrics": self.training_metrics,
+                "last_price": self._last_price,
                 "config": {
                     "n_estimators": self.n_estimators,
                     "max_depth": self.max_depth,
@@ -341,6 +429,7 @@ class XGBoostModel(BaseModel):
         self.is_trained = data["is_trained"]
         self.last_trained = data["last_trained"]
         self.training_metrics = data["training_metrics"]
+        self._last_price = data.get("last_price")
 
         config = data["config"]
         self.n_estimators = config["n_estimators"]
