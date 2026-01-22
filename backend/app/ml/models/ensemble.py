@@ -151,28 +151,46 @@ class EnsemblePredictor:
         """
         Update model weights based on training performance.
 
-        Uses direction accuracy as the primary metric.
+        Uses direction accuracy and MAPE as metrics.
+        Models with MAPE > 100% are considered unreliable and get minimal weight.
         """
-        accuracies = {}
+        scores = {}
 
         for model_name, metrics in training_results.items():
             if "error" in metrics:
-                accuracies[model_name] = 0.5  # Default for failed models
+                scores[model_name] = 0.0  # Zero weight for failed models
             else:
-                accuracies[model_name] = metrics.get("direction_accuracy", 0.5)
+                direction_accuracy = metrics.get("direction_accuracy", 0.5)
+                mape = metrics.get("mape", 100.0)
+
+                # If MAPE > 50%, heavily penalize this model
+                # This prevents poorly calibrated models from ruining ensemble
+                if mape > 50:
+                    score = 0.01  # Minimal weight
+                    logger.warning(f"{model_name} has MAPE={mape:.1f}%, setting minimal weight")
+                else:
+                    # Score based on direction accuracy and error
+                    # Higher direction accuracy = higher score
+                    # Lower MAPE = higher score
+                    mape_score = max(0, 1 - mape / 50)  # 0% MAPE = 1.0, 50% MAPE = 0.0
+                    score = 0.5 * direction_accuracy + 0.5 * mape_score
+
+                scores[model_name] = max(score, 0.01)  # Minimum 1% weight
 
         # Normalize to sum to 1
-        total = sum(accuracies.values())
+        total = sum(scores.values())
         if total > 0:
             for model_name in self.weights:
-                if model_name in accuracies:
-                    # Blend with default weights (50% each)
-                    new_weight = (self.weights[model_name] + accuracies[model_name] / total) / 2
-                    self.weights[model_name] = new_weight
+                if model_name in scores:
+                    self.weights[model_name] = scores[model_name] / total
+                else:
+                    self.weights[model_name] = 0.01
 
         # Ensure weights sum to 1
         total_weights = sum(self.weights.values())
         self.weights = {k: v / total_weights for k, v in self.weights.items()}
+
+        logger.info(f"Updated weights: {self.weights}")
 
     def predict(
         self,

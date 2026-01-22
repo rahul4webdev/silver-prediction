@@ -1,13 +1,17 @@
 """
 Facebook Prophet model for trend and seasonality prediction.
 Excellent at capturing weekly, monthly, and yearly patterns.
+
+NOTE: This model predicts percentage returns, not absolute prices.
+This works better for commodities like silver where the absolute
+price level changes over time.
 """
 
 import logging
 import pickle
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -22,6 +26,9 @@ class ProphetModel(BaseModel):
     """
     Prophet model for time series forecasting.
 
+    Predicts percentage returns instead of absolute prices for better
+    performance on commodities.
+
     Strengths:
     - Captures trend, seasonality, and holiday effects
     - Handles missing data gracefully
@@ -35,12 +42,12 @@ class ProphetModel(BaseModel):
 
     def __init__(
         self,
-        seasonality_mode: str = "multiplicative",
-        changepoint_prior_scale: float = 0.05,
-        seasonality_prior_scale: float = 10.0,
+        seasonality_mode: str = "additive",  # Additive is better for returns
+        changepoint_prior_scale: float = 0.1,  # More flexible for volatile markets
+        seasonality_prior_scale: float = 5.0,
         daily_seasonality: bool = True,
         weekly_seasonality: bool = True,
-        yearly_seasonality: bool = True,
+        yearly_seasonality: bool = False,  # Not enough data usually
     ):
         super().__init__("prophet")
 
@@ -53,10 +60,14 @@ class ProphetModel(BaseModel):
 
         self.model: Optional[Prophet] = None
         self.train_df: Optional[pd.DataFrame] = None
+        self._last_price: Optional[float] = None
 
-    def _prepare_data(self, df: pd.DataFrame, target_col: str = "close") -> pd.DataFrame:
+    def _prepare_data(self, df: pd.DataFrame, target_col: str = "close") -> Tuple[pd.DataFrame, float]:
         """
-        Prepare data for Prophet (requires 'ds' and 'y' columns).
+        Prepare data for Prophet - converts to percentage returns.
+
+        Returns:
+            Tuple of (prophet_df, last_price)
         """
         prophet_df = pd.DataFrame()
 
@@ -70,8 +81,17 @@ class ProphetModel(BaseModel):
         else:
             raise ValueError("No timestamp column found in DataFrame")
 
-        # Target column
-        prophet_df["y"] = df[target_col].values
+        # Get price data
+        prices = df[target_col].values
+        last_price = float(prices[-1])
+
+        # Calculate percentage returns (we predict returns, not absolute prices)
+        # This normalizes the scale and works better for volatile commodities
+        returns = np.diff(prices) / prices[:-1] * 100  # Percentage returns
+
+        # Align timestamps (first row has no return)
+        prophet_df = prophet_df.iloc[1:].copy()
+        prophet_df["y"] = returns
 
         # Remove timezone if present (Prophet prefers tz-naive)
         if prophet_df["ds"].dt.tz is not None:
@@ -80,7 +100,7 @@ class ProphetModel(BaseModel):
         # Drop any NaN values
         prophet_df = prophet_df.dropna()
 
-        return prophet_df
+        return prophet_df, last_price
 
     def train(
         self,
@@ -89,7 +109,7 @@ class ProphetModel(BaseModel):
         validation_split: float = 0.2,
     ) -> Dict[str, float]:
         """
-        Train Prophet model.
+        Train Prophet model on percentage returns.
 
         Args:
             df: DataFrame with timestamp and price data
@@ -99,10 +119,10 @@ class ProphetModel(BaseModel):
         Returns:
             Training metrics
         """
-        logger.info(f"Training Prophet model on {len(df)} samples")
+        logger.info(f"Training Prophet model on {len(df)} samples (using returns)")
 
-        # Prepare data
-        prophet_df = self._prepare_data(df, target_col)
+        # Prepare data (converts to returns)
+        prophet_df, self._last_price = self._prepare_data(df, target_col)
 
         # Split for validation
         split_idx = int(len(prophet_df) * (1 - validation_split))
@@ -123,37 +143,43 @@ class ProphetModel(BaseModel):
         # Suppress Prophet's verbose output
         self.model.fit(train_data)
 
-        # Validate
+        # Validate - predict returns
         future = self.model.make_future_dataframe(periods=len(val_data), freq="h")
         forecast = self.model.predict(future)
 
-        # Calculate validation metrics
-        val_predictions = forecast.iloc[-len(val_data):]["yhat"].values
-        val_actual = val_data["y"].values
+        # Get return predictions and actuals
+        val_pred_returns = forecast.iloc[-len(val_data):]["yhat"].values
+        val_actual_returns = val_data["y"].values
 
-        mae = np.mean(np.abs(val_predictions - val_actual))
-        rmse = np.sqrt(np.mean((val_predictions - val_actual) ** 2))
-        mape = np.mean(np.abs((val_actual - val_predictions) / val_actual)) * 100
+        # Calculate return-based metrics
+        mae = np.mean(np.abs(val_pred_returns - val_actual_returns))
+        rmse = np.sqrt(np.mean((val_pred_returns - val_actual_returns) ** 2))
 
-        # Direction accuracy
-        val_direction_actual = np.sign(np.diff(val_actual))
-        val_direction_pred = np.sign(np.diff(val_predictions))
+        # For returns, MAPE doesn't make sense (returns can be 0)
+        # Use MAE relative to mean return magnitude instead
+        mean_return_mag = np.mean(np.abs(val_actual_returns))
+        mape = (mae / mean_return_mag * 100) if mean_return_mag > 0 else 100
+
+        # Direction accuracy - this is what matters most
+        val_direction_actual = np.sign(val_actual_returns)
+        val_direction_pred = np.sign(val_pred_returns)
         direction_accuracy = np.mean(val_direction_actual == val_direction_pred)
 
         self.training_metrics = {
             "mae": float(mae),
             "rmse": float(rmse),
-            "mape": float(mape),
+            "mape": float(mape),  # Relative to mean return magnitude
             "direction_accuracy": float(direction_accuracy),
             "train_samples": len(train_data),
             "val_samples": len(val_data),
+            "prediction_type": "returns",
         }
 
         self.is_trained = True
         self.last_trained = datetime.now()
         self.train_df = prophet_df
 
-        logger.info(f"Prophet training complete. MAPE: {mape:.2f}%, Direction: {direction_accuracy:.2%}")
+        logger.info(f"Prophet training complete. Direction accuracy: {direction_accuracy:.2%}, MAE: {mae:.4f}%")
 
         return self.training_metrics
 
@@ -166,10 +192,12 @@ class ProphetModel(BaseModel):
         """
         Make prediction with Prophet.
 
+        Predicts return and converts back to price using current_price.
+
         Args:
             df: Recent data for context
             horizon: Periods ahead to predict
-            current_price: Current price for direction calculation
+            current_price: Current price for conversion and direction
 
         Returns:
             PredictionResult with prediction and intervals
@@ -178,51 +206,57 @@ class ProphetModel(BaseModel):
             raise RuntimeError("Model must be trained before prediction")
 
         # Prepare recent data
-        prophet_df = self._prepare_data(df)
+        prophet_df, last_data_price = self._prepare_data(df)
+
+        # Use provided current_price or fall back to last price in data
+        if current_price is None:
+            current_price = last_data_price
 
         # Determine frequency from data
         if len(prophet_df) > 1:
             time_diff = prophet_df["ds"].diff().median()
             if time_diff <= timedelta(minutes=30):
-                freq = "30T"
+                freq = "30min"
             elif time_diff <= timedelta(hours=1):
-                freq = "H"
+                freq = "h"
             elif time_diff <= timedelta(hours=4):
-                freq = "4H"
+                freq = "4h"
             else:
                 freq = "D"
         else:
-            freq = "H"
+            freq = "h"
 
         # Create future dataframe
         last_date = prophet_df["ds"].max()
         future_dates = pd.date_range(start=last_date, periods=horizon + 1, freq=freq)[1:]
         future = pd.DataFrame({"ds": future_dates})
 
-        # Make prediction
+        # Make prediction (returns percentage return)
         forecast = self.model.predict(future)
 
-        # Get the prediction for target horizon
+        # Get the predicted return and confidence intervals
         pred_row = forecast.iloc[-1]
-        predicted_price = float(pred_row["yhat"])
+        predicted_return = float(pred_row["yhat"])  # This is percentage return
+        ci_return_lower = float(pred_row["yhat_lower"])
+        ci_return_upper = float(pred_row["yhat_upper"])
 
-        # Calculate uncertainty from Prophet's intervals
-        ci_lower = float(pred_row["yhat_lower"])
-        ci_upper = float(pred_row["yhat_upper"])
+        # Convert return prediction to price
+        # If predicted return is +1%, price goes up 1%
+        predicted_price = current_price * (1 + predicted_return / 100)
 
-        # Prophet provides 95% CI by default, estimate std from it
-        std_dev = (ci_upper - ci_lower) / (2 * 1.96)
+        # Convert confidence intervals to price
+        ci_95_lower = current_price * (1 + ci_return_lower / 100)
+        ci_95_upper = current_price * (1 + ci_return_upper / 100)
+
+        # Estimate std_dev from return intervals
+        return_std = (ci_return_upper - ci_return_lower) / (2 * 1.96)
+        std_dev = current_price * return_std / 100
 
         # Calculate all confidence intervals
-        ci_50, ci_80, ci_95 = self.calculate_confidence_intervals(predicted_price, std_dev)
-
-        # Use Prophet's actual 95% CI
-        ci_95 = (ci_lower, ci_upper)
+        ci_50, ci_80, _ = self.calculate_confidence_intervals(predicted_price, std_dev)
+        ci_95 = (ci_95_lower, ci_95_upper)
 
         # Determine direction
-        if current_price is None:
-            current_price = float(prophet_df["y"].iloc[-1])
-
         direction, direction_prob = self.determine_direction(current_price, predicted_price)
 
         return PredictionResult(
@@ -236,7 +270,7 @@ class ProphetModel(BaseModel):
             model_name=self.model_name,
             prediction_time=datetime.now(),
             target_time=future_dates[-1].to_pydatetime(),
-            features_used=["trend", "seasonality"],
+            features_used=["trend", "seasonality", "returns"],
         )
 
     def save(self, path: str) -> None:
@@ -250,6 +284,7 @@ class ProphetModel(BaseModel):
                 "is_trained": self.is_trained,
                 "last_trained": self.last_trained,
                 "training_metrics": self.training_metrics,
+                "last_price": self._last_price,
                 "config": {
                     "seasonality_mode": self.seasonality_mode,
                     "changepoint_prior_scale": self.changepoint_prior_scale,
@@ -268,5 +303,6 @@ class ProphetModel(BaseModel):
         self.is_trained = data["is_trained"]
         self.last_trained = data["last_trained"]
         self.training_metrics = data["training_metrics"]
+        self._last_price = data.get("last_price")
 
         logger.info(f"Prophet model loaded from {path}")
