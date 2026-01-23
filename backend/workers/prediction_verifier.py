@@ -272,6 +272,7 @@ def generate_predictions(self, asset: str, market: str, interval: str):
 def sync_market_data(self):
     """
     Sync latest market data from Upstox and Yahoo Finance.
+    Syncs 30m data and aggregates to 1h and 4h for MCX.
     """
     async def _sync():
         from app.services.data_sync import DataSyncService
@@ -280,31 +281,33 @@ def sync_market_data(self):
         results = {}
 
         async with get_db_context() as db:
-            # Sync Silver data
+            # Sync Silver data - all intervals
             for market in ["mcx", "comex"]:
                 if is_market_open(market):
-                    try:
-                        if market == "mcx":
-                            result = await sync_service.sync_mcx_data(db, "silver", "30m")
-                        else:
-                            result = await sync_service.sync_comex_data(db, "silver", "30m")
-                        results[f"silver_{market}"] = result
-                    except Exception as e:
-                        logger.warning(f"Failed to sync silver {market}: {e}")
-                        results[f"silver_{market}"] = {"error": str(e)}
+                    for interval in ["30m", "1h", "4h", "1d"]:
+                        try:
+                            if market == "mcx":
+                                result = await sync_service.sync_mcx_data(db, "silver", interval)
+                            else:
+                                result = await sync_service.sync_comex_data(db, "silver", interval)
+                            results[f"silver_{market}_{interval}"] = result
+                        except Exception as e:
+                            logger.warning(f"Failed to sync silver {market} {interval}: {e}")
+                            results[f"silver_{market}_{interval}"] = {"error": str(e)}
 
-            # Sync Gold data
+            # Sync Gold data - all intervals
             for market in ["mcx", "comex"]:
                 if is_market_open(market):
-                    try:
-                        if market == "mcx":
-                            result = await sync_service.sync_mcx_data(db, "gold", "30m")
-                        else:
-                            result = await sync_service.sync_comex_data(db, "gold", "30m")
-                        results[f"gold_{market}"] = result
-                    except Exception as e:
-                        logger.warning(f"Failed to sync gold {market}: {e}")
-                        results[f"gold_{market}"] = {"error": str(e)}
+                    for interval in ["30m", "1h", "4h", "1d"]:
+                        try:
+                            if market == "mcx":
+                                result = await sync_service.sync_mcx_data(db, "gold", interval)
+                            else:
+                                result = await sync_service.sync_comex_data(db, "gold", interval)
+                            results[f"gold_{market}_{interval}"] = result
+                        except Exception as e:
+                            logger.warning(f"Failed to sync gold {market} {interval}: {e}")
+                            results[f"gold_{market}_{interval}"] = {"error": str(e)}
 
             return results
 

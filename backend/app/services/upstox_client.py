@@ -406,9 +406,11 @@ class UpstoxClient:
 
         This is the main method to use for syncing MCX data.
         It handles instrument key resolution and data fetching.
+        For intervals not natively supported by Upstox (1h, 4h), it fetches
+        30m data and aggregates it.
 
         Args:
-            interval: Candle interval (30m, 1h, 1d, etc.)
+            interval: Candle interval (30m, 1h, 4h, 1d, etc.)
             start_date: Start date
             end_date: End date (defaults to now)
 
@@ -423,13 +425,22 @@ class UpstoxClient:
         if not instrument_key:
             raise UpstoxAPIError("Could not find MCX Silver instrument")
 
-        # Map interval
-        upstox_interval = UPSTOX_INTERVAL_MAP.get(interval, interval)
-        if upstox_interval not in ["1minute", "5minute", "15minute", "30minute", "60minute", "day", "week", "month"]:
-            logger.warning(f"Unknown interval {interval}, defaulting to 30minute")
-            upstox_interval = "30minute"
-
         end_date = end_date or datetime.now()
+
+        # Handle intervals that need aggregation (1h, 4h)
+        # Upstox only supports: 1minute, 30minute, day, week, month
+        needs_aggregation = interval in ["1h", "4h"]
+
+        if needs_aggregation:
+            # Fetch 30m data and aggregate
+            upstox_interval = "30minute"
+            logger.info(f"Interval {interval} not natively supported by Upstox, fetching 30m data to aggregate")
+        else:
+            # Map to Upstox interval
+            upstox_interval = UPSTOX_INTERVAL_MAP.get(interval, interval)
+            if upstox_interval not in ["1minute", "30minute", "day", "week", "month"]:
+                logger.warning(f"Unknown interval {interval}, defaulting to 30minute")
+                upstox_interval = "30minute"
 
         # Calculate days to fetch
         days = (end_date - start_date).days + 1
@@ -462,8 +473,59 @@ class UpstoxClient:
         # Sort by timestamp
         df = df.sort_values("timestamp").reset_index(drop=True)
 
-        logger.info(f"Fetched {len(df)} MCX silver candles from Upstox")
+        # Aggregate if needed
+        if needs_aggregation and not df.empty:
+            df = self._aggregate_candles(df, interval)
+            logger.info(f"Aggregated to {len(df)} {interval} candles")
+        else:
+            logger.info(f"Fetched {len(df)} MCX silver candles from Upstox")
+
         return df
+
+    def _aggregate_candles(self, df: pd.DataFrame, target_interval: str) -> pd.DataFrame:
+        """
+        Aggregate candles to a larger interval.
+
+        Args:
+            df: DataFrame with OHLCV data (expects 30m candles)
+            target_interval: Target interval (1h, 4h)
+
+        Returns:
+            Aggregated DataFrame
+        """
+        if df.empty:
+            return df
+
+        # Ensure timestamp is datetime and set as index
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.set_index("timestamp")
+
+        # Determine aggregation rule
+        if target_interval == "1h":
+            rule = "1h"  # pandas rule for 1 hour
+        elif target_interval == "4h":
+            rule = "4h"  # pandas rule for 4 hours
+        else:
+            return df.reset_index()
+
+        # Aggregate OHLCV data
+        agg_df = df.resample(rule).agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }).dropna()
+
+        # Reset index and rename
+        agg_df = agg_df.reset_index()
+
+        # Keep open_interest if present
+        if "open_interest" in df.columns:
+            oi_df = df["open_interest"].resample(rule).last().reset_index()
+            agg_df["open_interest"] = oi_df["open_interest"]
+
+        return agg_df
 
     async def get_live_quote(self, instrument_key: Optional[str] = None) -> Dict[str, Any]:
         """
