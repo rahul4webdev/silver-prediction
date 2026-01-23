@@ -68,6 +68,10 @@ export interface Prediction {
   asset: string;
   market: string;
   interval: string;
+  // Contract info (MCX silver has multiple contracts: SILVER, SILVERM, SILVERMIC)
+  instrument_key?: string | null;
+  contract_type?: ContractType | null;
+  trading_symbol?: string | null;  // Human-readable like "SILVERM FUT 27 FEB 26"
   prediction_time: string;
   target_time: string;
   current_price: number;

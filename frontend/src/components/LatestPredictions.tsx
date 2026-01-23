@@ -87,6 +87,20 @@ export default function LatestPredictions({ asset = 'silver', market }: LatestPr
         const isVerified = pred.verification !== null;
         const isCorrect = pred.verification?.is_direction_correct;
 
+        // Extract contract display (e.g., "SILVERM 27 FEB" from "SILVERM FUT 27 FEB 26")
+        const getContractLabel = () => {
+          if (!pred.contract_type) return null;
+          if (pred.trading_symbol) {
+            // Extract expiry from trading symbol (e.g., "SILVERM FUT 27 FEB 26" -> "27 FEB")
+            const parts = pred.trading_symbol.split(' ');
+            if (parts.length >= 4) {
+              return `${pred.contract_type} ${parts[2]} ${parts[3]}`;
+            }
+          }
+          return pred.contract_type;
+        };
+        const contractLabel = getContractLabel();
+
         return (
           <div
             key={interval}
@@ -99,7 +113,14 @@ export default function LatestPredictions({ asset = 'silver', market }: LatestPr
                 : 'bg-white/5 border border-white/5'
             )}
           >
-            <div className="text-[10px] text-zinc-500 mb-0.5">{intervalLabels[interval]}</div>
+            <div className="text-[10px] text-zinc-500 mb-0.5">
+              {intervalLabels[interval]}
+              {contractLabel && (
+                <span className="block text-[8px] text-zinc-600 truncate" title={pred.trading_symbol || contractLabel}>
+                  {contractLabel}
+                </span>
+              )}
+            </div>
             <div className={cn(
               'text-sm font-semibold flex items-center justify-center gap-1',
               pred.predicted_direction === 'bullish' ? 'text-green-400' :

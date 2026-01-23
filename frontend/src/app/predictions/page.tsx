@@ -223,6 +223,7 @@ export default function PredictionsPage() {
                 <tr className="border-b border-white/5">
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Time</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Market</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Contract</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Type</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Direction</th>
                   <th className="text-right text-xs text-zinc-500 font-medium p-4">Current</th>
@@ -257,6 +258,23 @@ export default function PredictionsPage() {
                         )}>
                           {prediction.market.toUpperCase()}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        {prediction.contract_type ? (
+                          <div>
+                            <span className="text-sm text-zinc-300">{prediction.contract_type}</span>
+                            {prediction.trading_symbol && (
+                              <span className="block text-[10px] text-zinc-500" title={prediction.trading_symbol}>
+                                {(() => {
+                                  const parts = prediction.trading_symbol.split(' ');
+                                  return parts.length >= 5 ? `${parts[2]} ${parts[3]} ${parts[4]}` : '';
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-zinc-500">-</span>
+                        )}
                       </td>
                       <td className="p-4">
                         <span className="text-sm text-zinc-300">

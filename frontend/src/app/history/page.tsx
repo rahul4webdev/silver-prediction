@@ -241,6 +241,7 @@ export default function HistoryPage() {
                 <tr className="border-b border-white/5">
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Time</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Market</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Contract</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Type</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Direction</th>
                   <th className="text-right text-xs text-zinc-500 font-medium p-4">Current</th>
@@ -275,6 +276,23 @@ export default function HistoryPage() {
                         )}>
                           {prediction.market.toUpperCase()}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        {prediction.contract_type ? (
+                          <div>
+                            <span className="text-sm text-zinc-300">{prediction.contract_type}</span>
+                            {prediction.trading_symbol && (
+                              <span className="block text-[10px] text-zinc-500" title={prediction.trading_symbol}>
+                                {(() => {
+                                  const parts = prediction.trading_symbol.split(' ');
+                                  return parts.length >= 5 ? `${parts[2]} ${parts[3]} ${parts[4]}` : '';
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-zinc-500">-</span>
+                        )}
                       </td>
                       <td className="p-4">
                         <span className="text-sm text-zinc-300">
@@ -364,11 +382,13 @@ export default function HistoryPage() {
           <button
             onClick={() => {
               const csv = [
-                ['Time', 'Target Time', 'Market', 'Interval', 'Direction', 'Confidence', 'Current Price', 'Predicted Price', 'Actual Price', 'Error %', 'Result'].join(','),
+                ['Time', 'Target Time', 'Market', 'Contract', 'Trading Symbol', 'Interval', 'Direction', 'Confidence', 'Current Price', 'Predicted Price', 'Actual Price', 'Error %', 'Result'].join(','),
                 ...predictions.map(p => [
                   p.prediction_time,
                   p.target_time,
                   p.market.toUpperCase(),
+                  p.contract_type || '',
+                  p.trading_symbol || '',
                   p.interval,
                   p.predicted_direction,
                   (p.direction_confidence * 100).toFixed(1),

@@ -59,10 +59,31 @@ export default function PredictionCard({ asset = 'silver', market, interval }: P
   const isBullish = prediction.predicted_direction === 'bullish';
   const confidence = prediction.direction_confidence * 100;
 
+  // Extract contract display info
+  const getContractLabel = () => {
+    if (!prediction.contract_type) return null;
+    if (prediction.trading_symbol) {
+      // Extract expiry from trading symbol (e.g., "SILVERM FUT 27 FEB 26" -> "SILVERM 27 FEB 26")
+      const parts = prediction.trading_symbol.split(' ');
+      if (parts.length >= 5) {
+        return `${prediction.contract_type} ${parts[2]} ${parts[3]} ${parts[4]}`;
+      }
+    }
+    return prediction.contract_type;
+  };
+  const contractLabel = getContractLabel();
+
   return (
     <div className="glass-card p-4 sm:p-6">
       <div className="flex items-center justify-between mb-3 sm:mb-4">
-        <span className="text-zinc-400 text-xs sm:text-sm font-medium">Latest Prediction</span>
+        <div>
+          <span className="text-zinc-400 text-xs sm:text-sm font-medium">Latest Prediction</span>
+          {contractLabel && (
+            <span className="block text-[10px] sm:text-xs text-zinc-500" title={prediction.trading_symbol || contractLabel}>
+              {contractLabel}
+            </span>
+          )}
+        </div>
         <span className="text-[10px] sm:text-xs text-zinc-500">{prediction.interval}</span>
       </div>
 

@@ -56,6 +56,25 @@ class Prediction(Base):
     market: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     interval: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
 
+    # Contract info (MCX silver has multiple contracts: SILVER, SILVERM, SILVERMIC)
+    instrument_key: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+        comment="Upstox instrument key (e.g., MCX_FO|451669)",
+    )
+    contract_type: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+        comment="Contract type (SILVER, SILVERM, SILVERMIC)",
+    )
+    trading_symbol: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Human-readable trading symbol (e.g., SILVERM FUT 27 FEB 26)",
+    )
+
     # ==========================================================================
     # PREDICTION DETAILS
     # ==========================================================================
@@ -222,12 +241,13 @@ class Prediction(Base):
         result = ""
         if self.is_direction_correct is not None:
             result = " correct" if self.is_direction_correct else " wrong"
+        contract = f", contract={self.contract_type}" if self.contract_type else ""
         return (
             f"<Prediction("
             f"id={self.id[:8]}..., "
             f"asset={self.asset}, "
             f"market={self.market}, "
-            f"interval={self.interval}, "
+            f"interval={self.interval}{contract}, "
             f"direction={self.predicted_direction}, "
             f"status={status}{result}"
             f")>"
@@ -241,6 +261,11 @@ class Prediction(Base):
             "asset": self.asset,
             "market": self.market,
             "interval": self.interval,
+            # Contract info
+            "instrument_key": self.instrument_key,
+            "contract_type": self.contract_type,
+            "trading_symbol": self.trading_symbol,
+            # Prediction details
             "prediction_time": self.prediction_time.isoformat(),
             "target_time": self.target_time.isoformat(),
             "current_price": float(self.current_price),
