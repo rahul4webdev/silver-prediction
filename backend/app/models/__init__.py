@@ -4,6 +4,7 @@ from app.models.price_data import PriceData
 from app.models.predictions import Prediction
 from app.models.market_factors import MarketFactor
 from app.models.tick_data import TickData, TickDataAggregated
+from app.models.alerts import PriceAlert, TradeJournal
 
 __all__ = [
     "Base",
@@ -14,4 +15,6 @@ __all__ = [
     "MarketFactor",
     "TickData",
     "TickDataAggregated",
+    "PriceAlert",
+    "TradeJournal",
 ]

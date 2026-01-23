@@ -177,3 +177,277 @@ export async function getSentiment(
     return null;
   }
 }
+
+// ============================================================
+// Macro Data
+// ============================================================
+
+export interface MacroData {
+  status: string;
+  timestamp: string;
+  dxy: {
+    value: number;
+    change_1d: number;
+    change_1w: number;
+    trend: string;
+  };
+  fear_greed: {
+    value: number;
+    label: string;
+    previous_value: number;
+    change: number;
+  };
+  cot: {
+    net_positions: number;
+    commercial_long: number;
+    commercial_short: number;
+    non_commercial_long: number;
+    non_commercial_short: number;
+    change_week: number;
+  };
+  treasury: {
+    us_10y: number;
+    us_2y: number;
+    spread_10y_2y: number;
+  };
+}
+
+export async function getMacroData(asset: string = 'silver'): Promise<MacroData | null> {
+  try {
+    return await fetchAPI<MacroData>(`/macro/all?asset=${asset}`);
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Alerts
+// ============================================================
+
+export interface PriceAlert {
+  id: string;
+  asset: string;
+  market: string;
+  alert_type: 'above' | 'below';
+  target_price: number;
+  current_price_at_creation: number;
+  status: 'active' | 'triggered' | 'cancelled';
+  created_at: string;
+  triggered_at: string | null;
+  notes: string | null;
+}
+
+export async function createAlert(
+  asset: string,
+  market: string,
+  alertType: 'above' | 'below',
+  targetPrice: number,
+  notes?: string
+): Promise<PriceAlert | null> {
+  try {
+    return await fetchAPI<PriceAlert>('/alerts/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        asset,
+        market,
+        alert_type: alertType,
+        target_price: targetPrice,
+        notes,
+      }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getAlerts(
+  asset?: string,
+  status?: string
+): Promise<{ alerts: PriceAlert[]; total: number }> {
+  const params = new URLSearchParams();
+  if (asset) params.set('asset', asset);
+  if (status) params.set('status', status);
+  try {
+    return await fetchAPI<{ alerts: PriceAlert[]; total: number }>(`/alerts/list?${params}`);
+  } catch {
+    return { alerts: [], total: 0 };
+  }
+}
+
+export async function deleteAlert(alertId: string): Promise<boolean> {
+  try {
+    await fetchAPI(`/alerts/${alertId}`, { method: 'DELETE' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// Trade Journal
+// ============================================================
+
+export interface Trade {
+  id: string;
+  asset: string;
+  market: string;
+  trade_type: 'long' | 'short';
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  entry_time: string;
+  exit_time: string | null;
+  pnl: number | null;
+  pnl_percent: number | null;
+  status: 'open' | 'closed';
+  prediction_id: string | null;
+  followed_prediction: boolean;
+  notes: string | null;
+}
+
+export async function createTrade(data: {
+  asset: string;
+  market: string;
+  trade_type: 'long' | 'short';
+  entry_price: number;
+  quantity: number;
+  prediction_id?: string;
+  followed_prediction?: boolean;
+  notes?: string;
+}): Promise<Trade | null> {
+  try {
+    return await fetchAPI<Trade>('/alerts/trades/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function closeTrade(
+  tradeId: string,
+  exitPrice: number,
+  notes?: string
+): Promise<Trade | null> {
+  try {
+    return await fetchAPI<Trade>(`/alerts/trades/${tradeId}/close`, {
+      method: 'POST',
+      body: JSON.stringify({ exit_price: exitPrice, notes }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getTrades(
+  asset?: string,
+  status?: string,
+  limit: number = 50
+): Promise<{ trades: Trade[]; total: number }> {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (asset) params.set('asset', asset);
+  if (status) params.set('status', status);
+  try {
+    return await fetchAPI<{ trades: Trade[]; total: number }>(`/alerts/trades/list?${params}`);
+  } catch {
+    return { trades: [], total: 0 };
+  }
+}
+
+export interface TradePerformance {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  average_pnl: number;
+  best_trade: number;
+  worst_trade: number;
+  followed_prediction_accuracy: number;
+}
+
+export async function getTradePerformance(
+  asset?: string,
+  days: number = 30
+): Promise<TradePerformance | null> {
+  const params = new URLSearchParams({ days: days.toString() });
+  if (asset) params.set('asset', asset);
+  try {
+    return await fetchAPI<TradePerformance>(`/alerts/trades/performance?${params}`);
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Confluence
+// ============================================================
+
+export interface ConfluenceData {
+  status: string;
+  asset: string;
+  market: string;
+  timestamp: string;
+  confluence_detected: boolean;
+  direction: 'bullish' | 'bearish' | 'mixed';
+  alignment_ratio: number;
+  aligned_intervals: string[];
+  total_intervals: number;
+  avg_confidence: number;
+  strength: number;
+  signal_quality: 'strong' | 'moderate' | 'weak' | 'none';
+  predictions: Record<string, {
+    direction: string;
+    confidence: number;
+    predicted_price: number;
+    current_price: number;
+    target_time: string;
+    interval: string;
+  } | null>;
+  recommendation: string;
+}
+
+export async function getConfluence(
+  asset: string = 'silver',
+  market: string = 'mcx'
+): Promise<ConfluenceData | null> {
+  const params = new URLSearchParams({ asset, market });
+  try {
+    return await fetchAPI<ConfluenceData>(`/confluence/detect?${params}`);
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Correlations
+// ============================================================
+
+export interface CorrelationData {
+  status: string;
+  lookback_days: number;
+  timestamp: string;
+  correlations: Record<string, {
+    correlation: number;
+    expected: string;
+    typical: number;
+    status: string;
+    data_points: number;
+  }>;
+  market_regime: {
+    type: string;
+    description: string;
+  };
+}
+
+export async function getCorrelations(
+  lookbackDays: number = 30
+): Promise<CorrelationData | null> {
+  const params = new URLSearchParams({ lookback_days: lookbackDays.toString() });
+  try {
+    return await fetchAPI<CorrelationData>(`/confluence/correlations?${params}`);
+  } catch {
+    return null;
+  }
+}

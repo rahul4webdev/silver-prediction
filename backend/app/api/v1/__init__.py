@@ -1,7 +1,10 @@
 # API v1 module
 from fastapi import APIRouter
 
-from app.api.v1 import predictions, historical, accuracy, health, auth, ticks, sentiment
+from app.api.v1 import (
+    predictions, historical, accuracy, health, auth, ticks,
+    sentiment, macro, alerts, confluence
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -12,3 +15,6 @@ router.include_router(historical.router, tags=["Historical Data"])
 router.include_router(accuracy.router, tags=["Accuracy"])
 router.include_router(ticks.router, tags=["Tick Data"])
 router.include_router(sentiment.router, tags=["Sentiment"])
+router.include_router(macro.router, tags=["Macro Data"])
+router.include_router(alerts.router, tags=["Alerts & Journal"])
+router.include_router(confluence.router, tags=["Confluence & Correlation"])

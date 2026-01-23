@@ -26,6 +26,13 @@ try:
 except ImportError:
     SENTIMENT_AVAILABLE = False
 
+# Optional macro data imports
+try:
+    from app.services.macro_data import macro_data_service
+    MACRO_AVAILABLE = True
+except ImportError:
+    MACRO_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,6 +195,27 @@ class PredictionEngine:
             except Exception as e:
                 logger.warning(f"Failed to add sentiment features: {e}")
 
+        # Add macro data features (DXY, Fear & Greed, etc.)
+        macro_data = {}
+        if MACRO_AVAILABLE:
+            try:
+                macro = await macro_data_service.get_all_macro_data(asset=asset)
+                macro_data = {
+                    "dxy": macro.get("dxy", {}).get("current"),
+                    "dxy_trend": macro.get("dxy", {}).get("trend"),
+                    "fear_greed": macro.get("fear_greed", {}).get("current"),
+                    "fear_greed_label": macro.get("fear_greed", {}).get("classification"),
+                    "macro_signal": macro.get("composite_signal", {}).get("direction"),
+                    "macro_score": macro.get("composite_signal", {}).get("score"),
+                }
+                # Add macro features to dataframe
+                macro_features = macro_data_service.macro_to_features(macro)
+                for feature_name, value in macro_features.items():
+                    df[feature_name] = value
+                logger.info(f"Added macro features: {list(macro_features.keys())}")
+            except Exception as e:
+                logger.warning(f"Failed to add macro features: {e}")
+
         # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
 
@@ -233,13 +261,16 @@ class PredictionEngine:
                 "interval": interval,
                 "data_points": len(df),
                 "sentiment_included": bool(sentiment_data),
+                "macro_included": bool(macro_data),
             },
         )
 
-        # Include sentiment in response
+        # Include sentiment and macro in response
         prediction_dict = prediction.to_dict()
         if sentiment_data:
             prediction_dict["sentiment"] = sentiment_data
+        if macro_data:
+            prediction_dict["macro"] = macro_data
 
         # Store prediction
         db.add(prediction)
