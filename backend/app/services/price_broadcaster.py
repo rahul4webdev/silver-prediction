@@ -1,15 +1,19 @@
 """
 Price Broadcaster - Manages WebSocket connections and broadcasts price updates.
-This is a singleton that can be imported by both the tick collector and the API.
+Uses Redis pub/sub for inter-process communication between tick collector and API.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, Optional, Set
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
+
+# Redis channel for price updates
+PRICE_CHANNEL = "price_updates"
 
 
 @dataclass
@@ -36,31 +40,137 @@ class PriceUpdate:
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PriceUpdate":
+        """Create PriceUpdate from dictionary."""
+        return cls(
+            asset=data.get("asset", ""),
+            market=data.get("market", ""),
+            symbol=data.get("symbol", ""),
+            price=data.get("price", 0),
+            open=data.get("open"),
+            high=data.get("high"),
+            low=data.get("low"),
+            close=data.get("close"),
+            change=data.get("change"),
+            change_percent=data.get("change_percent"),
+            volume=data.get("volume"),
+            timestamp=data.get("timestamp", ""),
+            source=data.get("source", "upstox_ws"),
+        )
+
 
 class PriceBroadcaster:
     """
     Manages price update broadcasting to WebSocket clients.
 
-    This is a singleton that stores the latest prices and notifies
-    registered callbacks when new prices arrive.
+    Uses Redis pub/sub for inter-process communication:
+    - Tick collector publishes price updates to Redis
+    - API subscribes to Redis and broadcasts to connected WebSocket clients
     """
 
     def __init__(self):
         self._latest_prices: Dict[str, PriceUpdate] = {}  # key: "asset:market"
         self._callbacks: Set[Callable] = set()
         self._lock = asyncio.Lock()
+        self._redis = None
+        self._pubsub = None
+        self._subscriber_task = None
 
     def get_key(self, asset: str, market: str) -> str:
         """Generate cache key for asset/market pair."""
         return f"{asset}:{market}"
 
-    async def update_price(self, update: PriceUpdate) -> None:
-        """
-        Update the latest price and notify all registered callbacks.
+    async def _get_redis(self):
+        """Get or create Redis connection."""
+        if self._redis is None:
+            try:
+                import redis.asyncio as redis
+                from app.core.config import settings
 
-        Args:
-            update: PriceUpdate object with latest price data
+                self._redis = redis.Redis(
+                    host=settings.redis_host,
+                    port=settings.redis_port,
+                    db=0,
+                    decode_responses=True,
+                )
+                logger.info(f"Connected to Redis at {settings.redis_host}:{settings.redis_port}")
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis: {e}")
+                return None
+        return self._redis
+
+    async def publish_price(self, update: PriceUpdate) -> None:
         """
+        Publish price update to Redis channel.
+        Called by the tick collector.
+        """
+        redis = await self._get_redis()
+        if redis:
+            try:
+                message = json.dumps(update.to_dict())
+                await redis.publish(PRICE_CHANNEL, message)
+
+                # Also store latest price in Redis for quick access
+                key = f"latest_price:{update.asset}:{update.market}"
+                await redis.set(key, message, ex=300)  # Expire in 5 minutes
+            except Exception as e:
+                logger.error(f"Failed to publish price update: {e}")
+
+    async def start_subscriber(self) -> None:
+        """
+        Start Redis subscriber to receive price updates.
+        Called by the API server.
+        """
+        redis = await self._get_redis()
+        if not redis:
+            logger.error("Cannot start subscriber - Redis not available")
+            return
+
+        try:
+            self._pubsub = redis.pubsub()
+            await self._pubsub.subscribe(PRICE_CHANNEL)
+            logger.info(f"Subscribed to Redis channel: {PRICE_CHANNEL}")
+
+            # Start background task to process messages
+            self._subscriber_task = asyncio.create_task(self._process_messages())
+        except Exception as e:
+            logger.error(f"Failed to start Redis subscriber: {e}")
+
+    async def stop_subscriber(self) -> None:
+        """Stop the Redis subscriber."""
+        if self._subscriber_task:
+            self._subscriber_task.cancel()
+            try:
+                await self._subscriber_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._pubsub:
+            await self._pubsub.unsubscribe(PRICE_CHANNEL)
+            await self._pubsub.close()
+
+        if self._redis:
+            await self._redis.close()
+
+    async def _process_messages(self) -> None:
+        """Process incoming Redis messages and broadcast to WebSocket clients."""
+        try:
+            async for message in self._pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        update = PriceUpdate.from_dict(data)
+                        await self._broadcast_to_clients(update)
+                    except Exception as e:
+                        logger.error(f"Error processing Redis message: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Redis subscriber error: {e}")
+
+    async def _broadcast_to_clients(self, update: PriceUpdate) -> None:
+        """Broadcast price update to all registered WebSocket clients."""
         key = self.get_key(update.asset, update.market)
 
         async with self._lock:
@@ -75,9 +185,22 @@ class PriceBroadcaster:
         # Run callbacks concurrently
         if self._callbacks:
             await asyncio.gather(
-                *[self._safe_callback(cb, message) for cb in self._callbacks],
+                *[self._safe_callback(cb, message) for cb in list(self._callbacks)],
                 return_exceptions=True
             )
+
+    async def update_price(self, update: PriceUpdate) -> None:
+        """
+        Update price - publishes to Redis if in tick collector mode,
+        or broadcasts directly if clients are connected.
+        """
+        # Publish to Redis for inter-process communication
+        await self.publish_price(update)
+
+        # Also update local cache
+        key = self.get_key(update.asset, update.market)
+        async with self._lock:
+            self._latest_prices[key] = update
 
     async def _safe_callback(self, callback: Callable, message: Dict) -> None:
         """Safely execute a callback, catching any exceptions."""
@@ -103,6 +226,19 @@ class PriceBroadcaster:
         """Get the latest cached price for an asset/market."""
         key = self.get_key(asset, market)
         return self._latest_prices.get(key)
+
+    async def get_latest_price_from_redis(self, asset: str, market: str) -> Optional[PriceUpdate]:
+        """Get the latest price from Redis cache."""
+        redis = await self._get_redis()
+        if redis:
+            try:
+                key = f"latest_price:{asset}:{market}"
+                data = await redis.get(key)
+                if data:
+                    return PriceUpdate.from_dict(json.loads(data))
+            except Exception as e:
+                logger.error(f"Failed to get price from Redis: {e}")
+        return None
 
     def get_all_latest_prices(self) -> Dict[str, Dict[str, Any]]:
         """Get all latest cached prices."""

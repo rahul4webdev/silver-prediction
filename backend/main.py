@@ -41,10 +41,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
 
+    # Start Redis subscriber for price updates
+    try:
+        from app.services.price_broadcaster import price_broadcaster
+        await price_broadcaster.start_subscriber()
+        logger.info("Price broadcaster Redis subscriber started")
+    except Exception as e:
+        logger.error(f"Failed to start price broadcaster: {e}")
+
     yield
 
     # Cleanup on shutdown
     logger.info("Shutting down...")
+
+    # Stop price broadcaster
+    try:
+        from app.services.price_broadcaster import price_broadcaster
+        await price_broadcaster.stop_subscriber()
+    except Exception as e:
+        logger.error(f"Error stopping price broadcaster: {e}")
+
     await close_db()
 
 
@@ -187,8 +203,10 @@ async def websocket_prices(websocket: WebSocket, asset: str):
             "message": f"Connected to {asset} price stream",
         })
 
-        # Send latest cached price if available
+        # Send latest cached price if available (check local cache first, then Redis)
         latest = price_broadcaster.get_latest_price(asset, "mcx")
+        if not latest:
+            latest = await price_broadcaster.get_latest_price_from_redis(asset, "mcx")
         if latest:
             await websocket.send_json({
                 "type": "price_update",
@@ -213,9 +231,11 @@ async def websocket_prices(websocket: WebSocket, asset: str):
                         "message": f"Subscribed to {asset} updates",
                     })
                 elif action == "get_latest":
-                    # Send latest cached price
+                    # Send latest cached price (check local cache first, then Redis)
                     market = message.get("market", "mcx")
                     latest = price_broadcaster.get_latest_price(asset, market)
+                    if not latest:
+                        latest = await price_broadcaster.get_latest_price_from_redis(asset, market)
                     if latest:
                         await websocket.send_json({
                             "type": "price_update",
