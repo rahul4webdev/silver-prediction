@@ -5,15 +5,61 @@ Runs periodically to check pending predictions against actual prices.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from celery import Celery
 
 from app.core.config import settings
+from app.core.constants import ASSET_CONFIGS, Asset, Market
 from app.models.database import get_db_context
 from app.services.prediction_engine import prediction_engine
 
 logger = logging.getLogger(__name__)
+
+# Timezone for market hours
+IST = ZoneInfo("Asia/Kolkata")
+EST = ZoneInfo("America/New_York")
+
+# MCX Market Hours (IST)
+MCX_MARKET_OPEN = time(9, 0)   # 9:00 AM IST
+MCX_MARKET_CLOSE = time(23, 30)  # 11:30 PM IST
+
+# COMEX is nearly 24 hours (6 PM to 5 PM next day EST)
+# We'll consider it always open for simplicity
+
+
+def is_mcx_market_open() -> bool:
+    """Check if MCX market is currently open (9 AM - 11:30 PM IST)."""
+    now_ist = datetime.now(IST).time()
+    return MCX_MARKET_OPEN <= now_ist <= MCX_MARKET_CLOSE
+
+
+def is_comex_market_open() -> bool:
+    """Check if COMEX market is open (nearly 24 hours, except weekends)."""
+    now_est = datetime.now(EST)
+    # COMEX is closed on weekends (Saturday after 5 PM to Sunday 6 PM)
+    weekday = now_est.weekday()
+    hour = now_est.hour
+
+    # Saturday after 5 PM EST - closed
+    if weekday == 5 and hour >= 17:
+        return False
+    # All day Sunday until 6 PM - closed
+    if weekday == 6 and hour < 18:
+        return False
+
+    return True
+
+
+def is_market_open(market: str) -> bool:
+    """Check if the specified market is open."""
+    if market == "mcx":
+        return is_mcx_market_open()
+    elif market == "comex":
+        return is_comex_market_open()
+    return True  # Default to open
+
 
 # Create Celery app
 celery_app = Celery(
@@ -35,29 +81,128 @@ celery_app.conf.update(
 )
 
 # Beat schedule for periodic tasks
+# Predictions for all intervals and both assets
 celery_app.conf.beat_schedule = {
+    # Verification - every minute (always runs to catch up on verifications)
     "verify-predictions-every-minute": {
         "task": "workers.prediction_verifier.verify_pending_predictions",
-        "schedule": 60.0,  # Every minute
+        "schedule": 60.0,
     },
-    "generate-30m-predictions": {
+
+    # Silver MCX - all intervals
+    "generate-silver-mcx-30m": {
         "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 1800.0,  # Every 30 minutes
+        "schedule": 1800.0,  # 30 minutes
         "args": ["silver", "mcx", "30m"],
     },
-    "generate-1h-predictions": {
+    "generate-silver-mcx-1h": {
         "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 3600.0,  # Every hour
+        "schedule": 3600.0,  # 1 hour
         "args": ["silver", "mcx", "1h"],
     },
+    "generate-silver-mcx-4h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 14400.0,  # 4 hours
+        "args": ["silver", "mcx", "4h"],
+    },
+    "generate-silver-mcx-daily": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 86400.0,  # Daily
+        "args": ["silver", "mcx", "1d"],
+    },
+
+    # Silver COMEX - all intervals
+    "generate-silver-comex-30m": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 1800.0,
+        "args": ["silver", "comex", "30m"],
+    },
+    "generate-silver-comex-1h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 3600.0,
+        "args": ["silver", "comex", "1h"],
+    },
+    "generate-silver-comex-4h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 14400.0,
+        "args": ["silver", "comex", "4h"],
+    },
+    "generate-silver-comex-daily": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 86400.0,
+        "args": ["silver", "comex", "1d"],
+    },
+
+    # Gold MCX - all intervals
+    "generate-gold-mcx-30m": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 1800.0,
+        "args": ["gold", "mcx", "30m"],
+    },
+    "generate-gold-mcx-1h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 3600.0,
+        "args": ["gold", "mcx", "1h"],
+    },
+    "generate-gold-mcx-4h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 14400.0,
+        "args": ["gold", "mcx", "4h"],
+    },
+    "generate-gold-mcx-daily": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 86400.0,
+        "args": ["gold", "mcx", "1d"],
+    },
+
+    # Gold COMEX - all intervals
+    "generate-gold-comex-30m": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 1800.0,
+        "args": ["gold", "comex", "30m"],
+    },
+    "generate-gold-comex-1h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 3600.0,
+        "args": ["gold", "comex", "1h"],
+    },
+    "generate-gold-comex-4h": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 14400.0,
+        "args": ["gold", "comex", "4h"],
+    },
+    "generate-gold-comex-daily": {
+        "task": "workers.prediction_verifier.generate_predictions",
+        "schedule": 86400.0,
+        "args": ["gold", "comex", "1d"],
+    },
+
+    # Data sync - every 5 minutes (only during market hours)
     "sync-market-data-every-5-minutes": {
         "task": "workers.prediction_verifier.sync_market_data",
-        "schedule": 300.0,  # Every 5 minutes
+        "schedule": 300.0,
     },
-    "retrain-models-daily": {
+
+    # Model retraining - daily for key intervals
+    "retrain-silver-mcx-30m": {
         "task": "workers.prediction_verifier.retrain_models",
-        "schedule": 86400.0,  # Daily
+        "schedule": 86400.0,
         "args": ["silver", "mcx", "30m"],
+    },
+    "retrain-silver-mcx-1h": {
+        "task": "workers.prediction_verifier.retrain_models",
+        "schedule": 86400.0,
+        "args": ["silver", "mcx", "1h"],
+    },
+    "retrain-gold-mcx-30m": {
+        "task": "workers.prediction_verifier.retrain_models",
+        "schedule": 86400.0,
+        "args": ["gold", "mcx", "30m"],
+    },
+    "retrain-gold-mcx-1h": {
+        "task": "workers.prediction_verifier.retrain_models",
+        "schedule": 86400.0,
+        "args": ["gold", "mcx", "1h"],
     },
 }
 
@@ -96,7 +241,17 @@ def verify_pending_predictions(self):
 def generate_predictions(self, asset: str, market: str, interval: str):
     """
     Generate prediction for specified asset/market/interval.
+    Only generates during market hours.
     """
+    # Check if market is open
+    if not is_market_open(market):
+        now_ist = datetime.now(IST)
+        logger.info(
+            f"Skipping prediction for {asset}/{market}/{interval} - "
+            f"market closed (IST: {now_ist.strftime('%H:%M')})"
+        )
+        return {"skipped": True, "reason": "market_closed"}
+
     async def _generate():
         async with get_db_context() as db:
             result = await prediction_engine.generate_prediction(
@@ -109,7 +264,7 @@ def generate_predictions(self, asset: str, market: str, interval: str):
         logger.info(f"Prediction generated for {asset}/{market}/{interval}")
         return result
     except Exception as e:
-        logger.error(f"Prediction generation failed: {e}")
+        logger.error(f"Prediction generation failed for {asset}/{market}/{interval}: {e}")
         self.retry(exc=e, countdown=300)
 
 
@@ -122,18 +277,36 @@ def sync_market_data(self):
         from app.services.data_sync import DataSyncService
 
         sync_service = DataSyncService()
+        results = {}
 
         async with get_db_context() as db:
-            # Sync MCX data
-            mcx_result = await sync_service.sync_mcx_data(db, "silver", "30m")
+            # Sync Silver data
+            for market in ["mcx", "comex"]:
+                if is_market_open(market):
+                    try:
+                        if market == "mcx":
+                            result = await sync_service.sync_mcx_data(db, "silver", "30m")
+                        else:
+                            result = await sync_service.sync_comex_data(db, "silver", "30m")
+                        results[f"silver_{market}"] = result
+                    except Exception as e:
+                        logger.warning(f"Failed to sync silver {market}: {e}")
+                        results[f"silver_{market}"] = {"error": str(e)}
 
-            # Sync COMEX data
-            comex_result = await sync_service.sync_comex_data(db, "silver", "30m")
+            # Sync Gold data
+            for market in ["mcx", "comex"]:
+                if is_market_open(market):
+                    try:
+                        if market == "mcx":
+                            result = await sync_service.sync_mcx_data(db, "gold", "30m")
+                        else:
+                            result = await sync_service.sync_comex_data(db, "gold", "30m")
+                        results[f"gold_{market}"] = result
+                    except Exception as e:
+                        logger.warning(f"Failed to sync gold {market}: {e}")
+                        results[f"gold_{market}"] = {"error": str(e)}
 
-            return {
-                "mcx": mcx_result,
-                "comex": comex_result,
-            }
+            return results
 
     try:
         result = run_async(_sync())

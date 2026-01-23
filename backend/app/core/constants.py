@@ -25,7 +25,7 @@ class PredictionInterval(str, Enum):
     THIRTY_MIN = "30m"
     ONE_HOUR = "1h"
     FOUR_HOUR = "4h"
-    DAILY = "daily"
+    DAILY = "1d"  # Changed from "daily" for consistency
 
 
 class PredictionDirection(str, Enum):

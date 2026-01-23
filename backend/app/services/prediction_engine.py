@@ -377,31 +377,85 @@ class PredictionEngine:
     ) -> Optional[float]:
         """
         Get the price at or closest to the target time.
+        Tries multiple sources: specific interval, then any interval, then tick data.
         """
-        # Look for price within a time window
-        time_tolerance = timedelta(minutes=60)
+        # Try increasingly larger time windows
+        for tolerance_minutes in [30, 60, 120, 240]:
+            time_tolerance = timedelta(minutes=tolerance_minutes)
 
-        query = (
-            select(PriceData)
-            .where(
-                and_(
-                    PriceData.asset == asset,
-                    PriceData.market == market,
-                    PriceData.interval == interval,
-                    PriceData.timestamp >= target_time - time_tolerance,
-                    PriceData.timestamp <= target_time + time_tolerance,
+            # First try with specific interval
+            query = (
+                select(PriceData)
+                .where(
+                    and_(
+                        PriceData.asset == asset,
+                        PriceData.market == market,
+                        PriceData.interval == interval,
+                        PriceData.timestamp >= target_time - time_tolerance,
+                        PriceData.timestamp <= target_time + time_tolerance,
+                    )
                 )
+                .order_by(func.abs(func.extract('epoch', PriceData.timestamp - target_time)))
+                .limit(1)
             )
-            .order_by(func.abs(func.extract('epoch', PriceData.timestamp - target_time)))
-            .limit(1)
-        )
 
-        result = await db.execute(query)
-        price_data = result.scalar_one_or_none()
+            result = await db.execute(query)
+            price_data = result.scalar_one_or_none()
 
-        if price_data:
-            return float(price_data.close)
+            if price_data:
+                return float(price_data.close)
 
+            # If not found, try with any interval (for price verification we just need the price)
+            query = (
+                select(PriceData)
+                .where(
+                    and_(
+                        PriceData.asset == asset,
+                        PriceData.market == market,
+                        PriceData.timestamp >= target_time - time_tolerance,
+                        PriceData.timestamp <= target_time + time_tolerance,
+                    )
+                )
+                .order_by(func.abs(func.extract('epoch', PriceData.timestamp - target_time)))
+                .limit(1)
+            )
+
+            result = await db.execute(query)
+            price_data = result.scalar_one_or_none()
+
+            if price_data:
+                logger.info(f"Found price using different interval: {price_data.interval}")
+                return float(price_data.close)
+
+        # Try tick data as last resort
+        try:
+            from app.models.tick_data import TickData
+
+            time_tolerance = timedelta(minutes=60)
+            query = (
+                select(TickData)
+                .where(
+                    and_(
+                        TickData.asset == asset,
+                        TickData.market == market,
+                        TickData.timestamp >= target_time - time_tolerance,
+                        TickData.timestamp <= target_time + time_tolerance,
+                    )
+                )
+                .order_by(func.abs(func.extract('epoch', TickData.timestamp - target_time)))
+                .limit(1)
+            )
+
+            result = await db.execute(query)
+            tick_data = result.scalar_one_or_none()
+
+            if tick_data:
+                logger.info(f"Found price from tick data")
+                return float(tick_data.ltp)
+        except Exception as e:
+            logger.debug(f"Could not query tick data: {e}")
+
+        logger.warning(f"No price data found for {asset}/{market} at {target_time}")
         return None
 
     async def get_accuracy_summary(
