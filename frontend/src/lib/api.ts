@@ -8,6 +8,7 @@ import type {
   AccuracySummary,
   LivePrice,
   HistoricalData,
+  ContractsResponse,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://predictionapi.gahfaudio.in';
@@ -448,6 +449,21 @@ export async function getCorrelations(
   const params = new URLSearchParams({ lookback_days: lookbackDays.toString() });
   try {
     return await fetchAPI<CorrelationData>(`/confluence/correlations?${params}`);
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Contracts
+// ============================================================
+
+export async function getMCXSilverContracts(
+  includeExpired: boolean = false
+): Promise<ContractsResponse | null> {
+  const params = new URLSearchParams({ include_expired: includeExpired.toString() });
+  try {
+    return await fetchAPI<ContractsResponse>(`/contracts/mcx/silver?${params}`);
   } catch {
     return null;
   }

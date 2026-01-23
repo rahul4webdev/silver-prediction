@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getLivePrice } from '@/lib/api';
+import { useEffect, useState, useRef } from 'react';
+import { getLivePrice, getMCXSilverContracts } from '@/lib/api';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { usePriceUpdates } from '@/hooks/useWebSocket';
-import type { LivePrice, Asset } from '@/lib/types';
+import type { LivePrice, Asset, ContractInfo, ContractType } from '@/lib/types';
 import LatestPredictions from './LatestPredictions';
 
 interface PriceCardProps {
@@ -12,13 +12,65 @@ interface PriceCardProps {
   market: 'mcx' | 'comex';
 }
 
+// Contract type labels for display
+const CONTRACT_LABELS: Record<ContractType, string> = {
+  'SILVER': 'Silver (30kg)',
+  'SILVERM': 'Silver Mini (5kg)',
+  'SILVERMIC': 'Silver Micro (1kg)',
+};
+
 export default function PriceCard({ asset = 'silver', market }: PriceCardProps) {
   const [price, setPrice] = useState<LivePrice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Use WebSocket for MCX real-time updates
-  const { price: wsPrice, isConnected, connectionStatus } = usePriceUpdates(asset, market);
+  // Contract selection state (MCX only)
+  const [contracts, setContracts] = useState<ContractInfo[]>([]);
+  const [selectedContract, setSelectedContract] = useState<ContractInfo | null>(null);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Use WebSocket for MCX real-time updates (now receives all contract prices)
+  const { price: wsPrice, prices: wsPrices, getPriceBySymbol, isConnected, connectionStatus } = usePriceUpdates(asset, market);
+
+  // Fetch MCX contracts on mount
+  useEffect(() => {
+    if (market !== 'mcx' || asset !== 'silver') return;
+
+    async function fetchContracts() {
+      setContractsLoading(true);
+      try {
+        const response = await getMCXSilverContracts();
+        if (response && response.status === 'success') {
+          setContracts(response.contracts);
+          // Find default contract (first SILVER contract or first available)
+          const defaultContract = response.contracts.find(c => c.contract_type === 'SILVER')
+            || response.contracts[0];
+          if (defaultContract && !selectedContract) {
+            setSelectedContract(defaultContract);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch contracts:', err);
+      } finally {
+        setContractsLoading(false);
+      }
+    }
+
+    fetchContracts();
+  }, [market, asset]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Fetch initial price via REST API
   useEffect(() => {
@@ -42,28 +94,35 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
     fetchInitialPrice();
   }, [asset, market]);
 
-  // Update price from WebSocket for MCX
+  // Update price from WebSocket for MCX - filter by selected contract
   useEffect(() => {
-    if (wsPrice && market === 'mcx' && wsPrice.market === 'mcx') {
+    if (market !== 'mcx') return;
+
+    // Get price for the selected contract
+    const contractPrice = selectedContract
+      ? getPriceBySymbol(selectedContract.instrument_key)
+      : wsPrice;
+
+    if (contractPrice && contractPrice.market === 'mcx') {
       setPrice(prev => ({
         ...prev,
-        asset: wsPrice.asset,
-        market: wsPrice.market,
-        symbol: wsPrice.symbol,
-        price: wsPrice.price,
-        open: wsPrice.open ?? prev?.open,
-        high: wsPrice.high ?? prev?.high,
-        low: wsPrice.low ?? prev?.low,
-        change: wsPrice.change ?? prev?.change,
-        change_percent: wsPrice.change_percent ?? prev?.change_percent,
-        volume: wsPrice.volume ?? prev?.volume,
-        timestamp: wsPrice.timestamp,
+        asset: contractPrice.asset,
+        market: contractPrice.market,
+        symbol: contractPrice.symbol,
+        price: contractPrice.price,
+        open: contractPrice.open ?? prev?.open,
+        high: contractPrice.high ?? prev?.high,
+        low: contractPrice.low ?? prev?.low,
+        change: contractPrice.change ?? prev?.change,
+        change_percent: contractPrice.change_percent ?? prev?.change_percent,
+        volume: contractPrice.volume ?? prev?.volume,
+        timestamp: contractPrice.timestamp,
         source: 'upstox_ws',
       }));
       setError(null);
       setLoading(false);
     }
-  }, [wsPrice, market]);
+  }, [wsPrice, wsPrices, selectedContract, getPriceBySymbol, market]);
 
   // Fallback polling for COMEX (since we don't have real-time WebSocket for it)
   useEffect(() => {
@@ -105,12 +164,29 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
     );
   }
 
+  // Group contracts by type for dropdown
+  const groupedContracts = contracts.reduce((acc, contract) => {
+    if (!acc[contract.contract_type]) {
+      acc[contract.contract_type] = [];
+    }
+    acc[contract.contract_type].push(contract);
+    return acc;
+  }, {} as Record<ContractType, ContractInfo[]>);
+
+  // Get display label for selected contract
+  const getContractDisplayLabel = (contract: ContractInfo | null) => {
+    if (!contract) return 'Select Contract';
+    return `${contract.contract_type} ${contract.expiry_date || ''}`.trim();
+  };
+
   if (error && !price) {
     return (
       <div className="glass-card p-4 sm:p-6">
         <div className="text-zinc-400 text-sm">
           {market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}
-          {market === 'mcx' && asset === 'silver' && <span className="text-zinc-500"> (SILVERM)</span>}
+          {market === 'mcx' && asset === 'silver' && selectedContract && (
+            <span className="text-zinc-500"> ({selectedContract.contract_type} {selectedContract.expiry_date})</span>
+          )}
         </div>
         <div className="text-zinc-500 mt-2">Unable to load price</div>
         <LatestPredictions asset={asset} market={market} />
@@ -135,10 +211,71 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
 
       <div className="relative">
         <div className="flex items-center justify-between mb-2 sm:mb-3">
-          <span className="text-zinc-400 text-xs sm:text-sm font-medium">
-            {market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}
-            {market === 'mcx' && asset === 'silver' && <span className="text-zinc-500"> (SILVERM)</span>}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-400 text-xs sm:text-sm font-medium">
+              {market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}
+            </span>
+            {/* Contract dropdown for MCX Silver */}
+            {market === 'mcx' && asset === 'silver' && contracts.length > 0 && (
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setDropdownOpen(!dropdownOpen)}
+                  className="flex items-center gap-1 text-[10px] sm:text-xs text-zinc-400 bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition-colors"
+                >
+                  <span className="truncate max-w-[100px] sm:max-w-[140px]">
+                    {getContractDisplayLabel(selectedContract)}
+                  </span>
+                  <svg
+                    className={cn("w-3 h-3 transition-transform", dropdownOpen && "rotate-180")}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute left-0 top-full mt-1 w-56 bg-zinc-900 border border-white/10 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+                    {(['SILVER', 'SILVERM', 'SILVERMIC'] as ContractType[]).map(type => (
+                      groupedContracts[type] && groupedContracts[type].length > 0 && (
+                        <div key={type}>
+                          <div className="px-3 py-2 text-[10px] text-zinc-500 font-medium bg-white/5 sticky top-0">
+                            {CONTRACT_LABELS[type]}
+                          </div>
+                          {groupedContracts[type].map(contract => (
+                            <button
+                              key={contract.instrument_key}
+                              onClick={() => {
+                                setSelectedContract(contract);
+                                setDropdownOpen(false);
+                              }}
+                              className={cn(
+                                "w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition-colors flex items-center justify-between",
+                                selectedContract?.instrument_key === contract.instrument_key && "bg-white/5 text-white"
+                              )}
+                            >
+                              <span>
+                                {contract.contract_type} {contract.expiry_date || 'No Expiry'}
+                              </span>
+                              {selectedContract?.instrument_key === contract.instrument_key && (
+                                <svg className="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Show loading indicator while fetching contracts */}
+            {market === 'mcx' && asset === 'silver' && contractsLoading && (
+              <span className="text-[10px] text-zinc-500">Loading contracts...</span>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             {/* WebSocket connection indicator for MCX */}
             {market === 'mcx' && (
@@ -168,6 +305,11 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
         {market === 'mcx' && (
           <div className="text-[10px] sm:text-xs text-zinc-500 mt-1">
             Price per kg
+            {selectedContract && selectedContract.lot_size && (
+              <span className="ml-2 text-zinc-600">
+                (Lot: {selectedContract.lot_size} kg)
+              </span>
+            )}
           </div>
         )}
 

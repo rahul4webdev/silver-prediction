@@ -283,6 +283,95 @@ class UpstoxClient:
         logger.warning("Silver instrument not found in MCX instruments")
         return None
 
+    async def get_all_silver_instrument_keys(self) -> List[Dict[str, Any]]:
+        """
+        Get instrument keys for all MCX Silver contracts (SILVER, SILVERM, SILVERMIC).
+
+        Returns:
+            List of dicts with instrument_key, trading_symbol, contract_type, expiry, lot_size
+        """
+        if not self._instruments_cache:
+            await self.fetch_instruments("MCX")
+
+        now = datetime.now()
+        silver_contracts = []
+
+        # Contract type priority for sorting
+        contract_priority = {"SILVER": 0, "SILVERM": 1, "SILVERMIC": 2}
+
+        for key, instrument in self._instruments_cache.items():
+            trading_symbol = instrument.get("trading_symbol", "") or instrument.get("tradingsymbol", "")
+            trading_symbol_upper = trading_symbol.upper()
+            instrument_type = instrument.get("instrument_type", "")
+            name = instrument.get("name", "")
+            asset_symbol = instrument.get("asset_symbol", "")
+
+            # Only process futures contracts
+            if instrument_type != "FUT":
+                continue
+
+            # Determine contract type
+            contract_type = None
+            if trading_symbol_upper.startswith("SILVERMIC") or "SILVERMIC" in trading_symbol_upper:
+                contract_type = "SILVERMIC"
+            elif trading_symbol_upper.startswith("SILVERM") and "SILVERMIC" not in trading_symbol_upper:
+                contract_type = "SILVERM"
+            elif trading_symbol_upper.startswith("SILVER") and "SILVERM" not in trading_symbol_upper and "SILVERMIC" not in trading_symbol_upper:
+                contract_type = "SILVER"
+            elif name == "SILVER":
+                # Fallback: check asset_symbol
+                if asset_symbol == "SILVERMIC":
+                    contract_type = "SILVERMIC"
+                elif asset_symbol == "SILVERM":
+                    contract_type = "SILVERM"
+                elif asset_symbol == "SILVER":
+                    contract_type = "SILVER"
+
+            if not contract_type:
+                continue
+
+            # Parse expiry date
+            expiry_val = instrument.get("expiry")
+            expiry = None
+
+            if expiry_val:
+                try:
+                    if isinstance(expiry_val, (int, float)):
+                        # Milliseconds timestamp
+                        expiry = datetime.fromtimestamp(expiry_val / 1000)
+                    elif isinstance(expiry_val, str):
+                        expiry = datetime.fromisoformat(expiry_val.replace("Z", "+00:00"))
+                except (ValueError, OSError):
+                    pass
+
+            # Skip expired contracts
+            if expiry and expiry < now:
+                continue
+
+            silver_contracts.append({
+                "instrument_key": instrument.get("instrument_key"),
+                "trading_symbol": trading_symbol,
+                "contract_type": contract_type,
+                "expiry": expiry,
+                "lot_size": instrument.get("lot_size"),
+                "_priority": contract_priority.get(contract_type, 99),
+            })
+
+        # Sort by contract type priority, then by expiry (nearest first)
+        silver_contracts.sort(
+            key=lambda x: (
+                x["_priority"],
+                x["expiry"] or datetime.max
+            )
+        )
+
+        # Remove sorting helper field
+        for contract in silver_contracts:
+            del contract["_priority"]
+
+        logger.info(f"Found {len(silver_contracts)} active silver contracts")
+        return silver_contracts
+
     # =========================================================================
     # HISTORICAL DATA
     # =========================================================================

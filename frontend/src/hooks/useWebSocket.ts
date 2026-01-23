@@ -150,7 +150,7 @@ export function useWebSocket(
 export interface PriceData {
   asset: string;
   market: string;
-  symbol: string;
+  symbol: string;  // instrument_key (e.g., MCX_FO|451669)
   price: number;
   open: number | null;
   high: number | null;
@@ -161,9 +161,14 @@ export interface PriceData {
   volume: number | null;
   timestamp: string;
   source: string;
+  contract_type: string | null;  // SILVER, SILVERM, SILVERMIC
+  trading_symbol: string | null;  // Human readable (e.g., SILVERM FUT 27 FEB 26)
 }
 
 export function usePriceUpdates(asset: string = 'silver', market: string = 'mcx') {
+  // Store prices for all contracts, keyed by symbol (instrument_key)
+  const [prices, setPrices] = useState<Record<string, PriceData>>({});
+  // Keep the most recent price update (for backward compatibility)
   const [price, setPrice] = useState<PriceData | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
@@ -171,7 +176,7 @@ export function usePriceUpdates(asset: string = 'silver', market: string = 'mcx'
     if (message.type === 'price_update') {
       // Only update if it matches our market filter
       if (message.market === market || market === 'all') {
-        setPrice({
+        const priceData: PriceData = {
           asset: message.asset as string,
           market: message.market as string,
           symbol: message.symbol as string,
@@ -185,7 +190,18 @@ export function usePriceUpdates(asset: string = 'silver', market: string = 'mcx'
           volume: (message.volume as number) ?? null,
           timestamp: message.timestamp as string,
           source: (message.source as string) ?? 'websocket',
-        });
+          contract_type: (message.contract_type as string) ?? null,
+          trading_symbol: (message.trading_symbol as string) ?? null,
+        };
+
+        // Update prices map with this contract's price
+        setPrices(prev => ({
+          ...prev,
+          [priceData.symbol]: priceData,
+        }));
+
+        // Also set as the most recent price (for backward compatibility)
+        setPrice(priceData);
       }
     } else if (message.type === 'connected') {
       setConnectionStatus('connected');
@@ -209,8 +225,22 @@ export function usePriceUpdates(asset: string = 'silver', market: string = 'mcx'
     }
   );
 
+  // Helper function to get price for a specific contract
+  const getPriceBySymbol = useCallback((symbol: string): PriceData | null => {
+    return prices[symbol] ?? null;
+  }, [prices]);
+
+  // Helper function to get price for a specific contract type (returns first/nearest)
+  const getPriceByContractType = useCallback((contractType: string): PriceData | null => {
+    const contractPrice = Object.values(prices).find(p => p.contract_type === contractType);
+    return contractPrice ?? null;
+  }, [prices]);
+
   return {
-    price,
+    price,  // Most recent price update (backward compatible)
+    prices,  // All prices keyed by symbol
+    getPriceBySymbol,
+    getPriceByContractType,
     isConnected,
     connectionStatus,
     lastMessage,

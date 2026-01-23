@@ -48,7 +48,8 @@ class TickCollector:
     def __init__(self):
         self._running = False
         self._ws = None
-        self._instrument_key: Optional[str] = None
+        self._instrument_keys: List[str] = []  # All silver contract instrument keys
+        self._instrument_map: Dict[str, Dict] = {}  # Map instrument_key -> contract info
         self._tick_buffer: deque = deque(maxlen=1000)  # Buffer for batch inserts
         self._last_insert_time = datetime.now(timezone.utc)
         self._insert_interval = 1  # Insert every 1 second
@@ -59,6 +60,7 @@ class TickCollector:
             "errors": 0,
             "last_tick_time": None,
             "connected_since": None,
+            "contracts_subscribed": 0,
         }
 
     @property
@@ -109,10 +111,24 @@ class TickCollector:
             await asyncio.sleep(60)  # Wait before retrying
             return
 
-        # Get instrument key
-        self._instrument_key = await upstox_client.get_silver_instrument_key()
-        if not self._instrument_key:
-            logger.error("Could not get silver instrument key")
+        # Get all silver instrument keys (SILVER, SILVERM, SILVERMIC)
+        try:
+            silver_contracts = await upstox_client.get_all_silver_instrument_keys()
+            if not silver_contracts:
+                logger.error("Could not get any silver instrument keys")
+                await asyncio.sleep(60)
+                return
+
+            self._instrument_keys = [c["instrument_key"] for c in silver_contracts]
+            self._instrument_map = {c["instrument_key"]: c for c in silver_contracts}
+            self._stats["contracts_subscribed"] = len(self._instrument_keys)
+
+            logger.info(f"Found {len(silver_contracts)} silver contracts to subscribe:")
+            for c in silver_contracts:
+                logger.info(f"  - {c['contract_type']}: {c['trading_symbol']} ({c['instrument_key']})")
+
+        except Exception as e:
+            logger.error(f"Failed to get silver instrument keys: {e}")
             await asyncio.sleep(60)
             return
 
@@ -138,7 +154,7 @@ class TickCollector:
             ) as ws:
                 self._ws = ws
                 self._stats["connected_since"] = datetime.now(timezone.utc)
-                logger.info(f"Connected to Upstox WebSocket for {self._instrument_key}")
+                logger.info(f"Connected to Upstox WebSocket for {len(self._instrument_keys)} silver contracts")
 
                 # Subscribe to instrument
                 await self._subscribe(ws)
@@ -172,20 +188,20 @@ class TickCollector:
             raise
 
     async def _subscribe(self, ws) -> None:
-        """Subscribe to market data feed."""
+        """Subscribe to market data feed for all silver contracts."""
         subscribe_message = {
             "guid": "tick-collector",
             "method": "sub",
             "data": {
                 "mode": "full",  # Full mode includes all data
-                "instrumentKeys": [self._instrument_key],
+                "instrumentKeys": self._instrument_keys,  # Subscribe to all silver contracts
             },
         }
 
         # Send as binary (bytes) as required by Upstox v3 WebSocket
         message_bytes = json.dumps(subscribe_message).encode('utf-8')
         await ws.send(message_bytes)
-        logger.info(f"Subscribed to {self._instrument_key} (binary message)")
+        logger.info(f"Subscribed to {len(self._instrument_keys)} silver contracts (binary message)")
 
     async def _process_message(self, message) -> None:
         """Process incoming WebSocket message (protobuf or JSON)."""
@@ -311,6 +327,9 @@ class TickCollector:
             if ltpc.cp and float(ltpc.cp) > 0:
                 change_percent = ((float(ltpc.ltp) - float(ltpc.cp)) / float(ltpc.cp)) * 100
 
+            # Get contract info from our map
+            contract_info = self._instrument_map.get(instrument_key, {})
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
@@ -323,13 +342,16 @@ class TickCollector:
                 change=float(ltpc.ltp) - float(ltpc.cp) if ltpc.cp else None,  # Actual price change
                 change_percent=change_percent,
                 volume=int(volume) if volume else None,
+                contract_type=contract_info.get("contract_type"),
+                trading_symbol=contract_info.get("trading_symbol"),
             )
             # Fire and forget - don't await to avoid blocking tick processing
             asyncio.create_task(price_broadcaster.update_price(update))
 
         # Log periodically
         if self._stats["ticks_received"] % 100 == 0:
-            logger.info(f"Received {self._stats['ticks_received']} ticks, LTP: {ltpc.ltp}, WS clients: {price_broadcaster.callback_count}")
+            contract_info = self._instrument_map.get(instrument_key, {})
+            logger.info(f"Received {self._stats['ticks_received']} ticks, {contract_info.get('contract_type', 'UNKNOWN')}: {ltpc.ltp}, WS clients: {price_broadcaster.callback_count}")
 
     async def _process_full_feed(self, instrument_key: str, feed: Dict) -> None:
         """Process full market data feed."""
@@ -382,6 +404,9 @@ class TickCollector:
             if ltpc.get("cp") and float(ltpc["cp"]) > 0:
                 change_percent = ((float(ltpc["ltp"]) - float(ltpc["cp"])) / float(ltpc["cp"])) * 100
 
+            # Get contract info from our map
+            contract_info = self._instrument_map.get(instrument_key, {})
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
@@ -394,6 +419,8 @@ class TickCollector:
                 change=float(ltpc["ltp"]) - float(ltpc["cp"]) if ltpc.get("cp") else None,  # Actual price change
                 change_percent=change_percent,
                 volume=int(intraday_ohlc["volume"]) if intraday_ohlc and intraday_ohlc.get("volume") else None,
+                contract_type=contract_info.get("contract_type"),
+                trading_symbol=contract_info.get("trading_symbol"),
             )
             asyncio.create_task(price_broadcaster.update_price(update))
 
@@ -423,6 +450,9 @@ class TickCollector:
             if ltpc.get("cp") and float(ltpc["cp"]) > 0:
                 change_percent = ((float(ltpc["ltp"]) - float(ltpc["cp"])) / float(ltpc["cp"])) * 100
 
+            # Get contract info from our map
+            contract_info = self._instrument_map.get(instrument_key, {})
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
@@ -430,6 +460,8 @@ class TickCollector:
                 price=float(ltpc["ltp"]),
                 change=float(ltpc["ltp"]) - float(ltpc["cp"]) if ltpc.get("cp") else None,  # Actual price change
                 change_percent=change_percent,
+                contract_type=contract_info.get("contract_type"),
+                trading_symbol=contract_info.get("trading_symbol"),
             )
             asyncio.create_task(price_broadcaster.update_price(update))
 

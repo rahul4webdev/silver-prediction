@@ -110,3 +110,22 @@ export interface AccuracySummary {
 export type Asset = 'silver' | 'gold';
 export type Market = 'mcx' | 'comex';
 export type Interval = '30m' | '1h' | '4h' | '1d';
+export type ContractType = 'SILVER' | 'SILVERM' | 'SILVERMIC';
+
+export interface ContractInfo {
+  instrument_key: string;
+  trading_symbol: string;
+  contract_type: ContractType;
+  expiry: string | null;
+  expiry_date: string | null;  // Human readable format like "27 Feb 2026"
+  lot_size: number | null;
+  tick_size: number | null;
+  is_active: boolean;
+}
+
+export interface ContractsResponse {
+  status: string;
+  contracts: ContractInfo[];
+  total: number;
+  default_contract: string | null;
+}

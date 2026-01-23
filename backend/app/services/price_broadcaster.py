@@ -21,7 +21,7 @@ class PriceUpdate:
     """Price update data structure."""
     asset: str
     market: str
-    symbol: str
+    symbol: str  # instrument_key (e.g., MCX_FO|451669)
     price: float
     open: Optional[float] = None
     high: Optional[float] = None
@@ -32,6 +32,8 @@ class PriceUpdate:
     volume: Optional[int] = None
     timestamp: str = ""
     source: str = "upstox_ws"
+    contract_type: Optional[str] = None  # SILVER, SILVERM, SILVERMIC
+    trading_symbol: Optional[str] = None  # Human readable (e.g., SILVERM FUT 27 FEB 26)
 
     def __post_init__(self):
         if not self.timestamp:
@@ -57,6 +59,8 @@ class PriceUpdate:
             volume=data.get("volume"),
             timestamp=data.get("timestamp", ""),
             source=data.get("source", "upstox_ws"),
+            contract_type=data.get("contract_type"),
+            trading_symbol=data.get("trading_symbol"),
         )
 
 
