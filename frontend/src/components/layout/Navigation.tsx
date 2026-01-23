@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import LiveIndicator from '@/components/widgets/LiveIndicator';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
@@ -71,6 +72,9 @@ export default function Navigation() {
               {link.label}
             </Link>
           ))}
+          <div className="ml-4 pl-4 border-l border-zinc-700">
+            <LiveIndicator />
+          </div>
         </div>
 
         {/* Mobile Menu Button */}
