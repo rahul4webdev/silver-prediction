@@ -27,7 +27,7 @@ PRICE_CHANNEL = "price_updates"
 
 # WebSocket server configuration
 WS_HOST = "0.0.0.0"
-WS_PORT = 8024
+WS_PORT = 8025
 
 # SSL certificates (Let's Encrypt)
 SSL_CERT = "/etc/letsencrypt/live/predictionapi.gahfaudio.in/fullchain.pem"
@@ -130,12 +130,12 @@ class WebSocketServer:
                 if self.pubsub:
                     try:
                         await self.pubsub.unsubscribe(PRICE_CHANNEL)
-                        await self.pubsub.close()
+                        await self.pubsub.aclose()
                     except:
                         pass
                 if self.redis:
                     try:
-                        await self.redis.close()
+                        await self.redis.aclose()
                     except:
                         pass
 

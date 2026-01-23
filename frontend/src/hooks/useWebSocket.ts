@@ -23,8 +23,8 @@ interface UseWebSocketReturn {
   reconnect: () => void;
 }
 
-// Dedicated WebSocket server on port 8024 (bypasses OpenLiteSpeed proxy limitations)
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://predictionapi.gahfaudio.in:8024';
+// Dedicated WebSocket server on port 8025 (bypasses OpenLiteSpeed proxy limitations)
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://predictionapi.gahfaudio.in:8025';
 
 export function useWebSocket(
   endpoint: string,
