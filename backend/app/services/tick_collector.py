@@ -190,6 +190,7 @@ class TickCollector:
         """Process incoming WebSocket message (protobuf or JSON)."""
         # Handle binary protobuf messages
         if isinstance(message, bytes):
+            logger.debug(f"Received binary message of {len(message)} bytes, PROTOBUF_AVAILABLE={PROTOBUF_AVAILABLE}")
             await self._process_protobuf_message(message)
             return
 
@@ -219,6 +220,7 @@ class TickCollector:
         try:
             feed_response = pb.FeedResponse()
             feed_response.ParseFromString(data)
+            logger.debug(f"Parsed protobuf: type={feed_response.type}, feeds={len(feed_response.feeds)}")
 
             # Check message type
             msg_type = feed_response.type
