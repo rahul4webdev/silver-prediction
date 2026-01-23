@@ -35,7 +35,7 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
     }
 
     fetchPrice();
-    const interval = setInterval(fetchPrice, 30000); // Refresh every 30 seconds
+    const interval = setInterval(fetchPrice, 5000); // Refresh every 5 seconds for more real-time feel
     return () => clearInterval(interval);
   }, [asset, market]);
 

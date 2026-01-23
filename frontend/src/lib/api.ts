@@ -42,7 +42,8 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
 
 export async function getLivePrice(asset: string, market: string): Promise<LivePrice> {
   const params = new URLSearchParams({ market });
-  return fetchAPI<LivePrice>(`/historical/live/${asset}?${params}`);
+  // Add cache: no-store to ensure fresh data on every request
+  return fetchAPI<LivePrice>(`/historical/live/${asset}?${params}`, { cache: 'no-store' });
 }
 
 export async function getHistoricalData(
