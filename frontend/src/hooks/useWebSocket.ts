@@ -146,33 +146,72 @@ export function useWebSocket(
 }
 
 // Hook for price updates
-export function usePriceUpdates(asset: string = 'silver') {
-  const [price, setPrice] = useState<{
-    price: number;
-    change: number;
-    changePercent: number;
-    timestamp: string;
-  } | null>(null);
+export interface PriceData {
+  asset: string;
+  market: string;
+  symbol: string;
+  price: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  change: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  timestamp: string;
+  source: string;
+}
+
+export function usePriceUpdates(asset: string = 'silver', market: string = 'mcx') {
+  const [price, setPrice] = useState<PriceData | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   const handleMessage = useCallback((message: WebSocketMessage) => {
     if (message.type === 'price_update') {
-      setPrice({
-        price: message.price as number,
-        change: message.change as number,
-        changePercent: message.change_percent as number,
-        timestamp: message.timestamp as string,
-      });
+      // Only update if it matches our market filter
+      if (message.market === market || market === 'all') {
+        setPrice({
+          asset: message.asset as string,
+          market: message.market as string,
+          symbol: message.symbol as string,
+          price: message.price as number,
+          open: (message.open as number) ?? null,
+          high: (message.high as number) ?? null,
+          low: (message.low as number) ?? null,
+          close: (message.close as number) ?? null,
+          change: (message.change as number) ?? null,
+          change_percent: (message.change_percent as number) ?? null,
+          volume: (message.volume as number) ?? null,
+          timestamp: message.timestamp as string,
+          source: (message.source as string) ?? 'websocket',
+        });
+      }
+    } else if (message.type === 'connected') {
+      setConnectionStatus('connected');
     }
+  }, [market]);
+
+  const handleConnect = useCallback(() => {
+    setConnectionStatus('connected');
+  }, []);
+
+  const handleDisconnect = useCallback(() => {
+    setConnectionStatus('disconnected');
   }, []);
 
   const { isConnected, lastMessage, send, reconnect } = useWebSocket(
     `/ws/prices/${asset}`,
-    { onMessage: handleMessage }
+    {
+      onMessage: handleMessage,
+      onConnect: handleConnect,
+      onDisconnect: handleDisconnect,
+    }
   );
 
   return {
     price,
     isConnected,
+    connectionStatus,
     lastMessage,
     send,
     reconnect,

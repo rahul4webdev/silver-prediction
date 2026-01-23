@@ -127,6 +127,7 @@ async def global_exception_handler(request, exc):
 from fastapi import WebSocket, WebSocketDisconnect
 import json
 import asyncio
+from app.services.price_broadcaster import price_broadcaster
 
 
 class ConnectionManager:
@@ -141,7 +142,8 @@ class ConnectionManager:
         logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
@@ -161,39 +163,79 @@ async def websocket_prices(websocket: WebSocket, asset: str):
     """
     WebSocket endpoint for real-time price updates.
 
-    Clients can subscribe to receive:
-    - Real-time price updates
-    - New predictions
-    - Verification results
+    Clients receive automatic price updates pushed from the tick collector.
     """
     await manager.connect(websocket)
 
-    try:
-        while True:
-            # Receive messages from client
-            data = await websocket.receive_text()
-
+    # Create a callback to send price updates to this client
+    async def send_price_update(message: dict):
+        # Filter by asset if needed
+        if message.get("asset") == asset or asset == "all":
             try:
+                await websocket.send_json(message)
+            except Exception:
+                pass
+
+    # Register callback with the price broadcaster
+    price_broadcaster.register_callback(send_price_update)
+
+    try:
+        # Send initial connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "asset": asset,
+            "message": f"Connected to {asset} price stream",
+        })
+
+        # Send latest cached price if available
+        latest = price_broadcaster.get_latest_price(asset, "mcx")
+        if latest:
+            await websocket.send_json({
+                "type": "price_update",
+                **latest.to_dict()
+            })
+
+        while True:
+            # Receive messages from client (for ping/pong or commands)
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60)
+
                 message = json.loads(data)
                 action = message.get("action")
 
-                if action == "subscribe":
+                if action == "ping":
+                    await websocket.send_json({"type": "pong"})
+                elif action == "subscribe":
+                    # Already subscribed, just confirm
                     await websocket.send_json({
                         "type": "subscribed",
                         "asset": asset,
                         "message": f"Subscribed to {asset} updates",
                     })
+                elif action == "get_latest":
+                    # Send latest cached price
+                    market = message.get("market", "mcx")
+                    latest = price_broadcaster.get_latest_price(asset, market)
+                    if latest:
+                        await websocket.send_json({
+                            "type": "price_update",
+                            **latest.to_dict()
+                        })
 
-                elif action == "ping":
-                    await websocket.send_json({"type": "pong"})
-
+            except asyncio.TimeoutError:
+                # Send heartbeat to keep connection alive
+                try:
+                    await websocket.send_json({"type": "heartbeat"})
+                except Exception:
+                    break
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Invalid JSON",
-                })
+                pass
 
     except WebSocketDisconnect:
+        pass
+    finally:
+        # Unregister callback and disconnect
+        price_broadcaster.unregister_callback(send_price_update)
         manager.disconnect(websocket)
 
 

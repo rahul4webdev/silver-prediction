@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getLivePrice } from '@/lib/api';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
+import { usePriceUpdates } from '@/hooks/useWebSocket';
 import type { LivePrice, Asset } from '@/lib/types';
 import LatestPredictions from './LatestPredictions';
 
@@ -16,8 +17,12 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Use WebSocket for MCX real-time updates
+  const { price: wsPrice, isConnected, connectionStatus } = usePriceUpdates(asset, market);
+
+  // Fetch initial price via REST API
   useEffect(() => {
-    async function fetchPrice() {
+    async function fetchInitialPrice() {
       try {
         setLoading(true);
         const data = await getLivePrice(asset, market);
@@ -34,15 +39,55 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
       }
     }
 
-    fetchPrice();
-    const interval = setInterval(fetchPrice, 1000); // Refresh every 1 second for real-time updates
+    fetchInitialPrice();
+  }, [asset, market]);
+
+  // Update price from WebSocket for MCX
+  useEffect(() => {
+    if (wsPrice && market === 'mcx' && wsPrice.market === 'mcx') {
+      setPrice(prev => ({
+        ...prev,
+        asset: wsPrice.asset,
+        market: wsPrice.market,
+        symbol: wsPrice.symbol,
+        price: wsPrice.price,
+        open: wsPrice.open ?? prev?.open,
+        high: wsPrice.high ?? prev?.high,
+        low: wsPrice.low ?? prev?.low,
+        change: wsPrice.change ?? prev?.change,
+        change_percent: wsPrice.change_percent ?? prev?.change_percent,
+        volume: wsPrice.volume ?? prev?.volume,
+        timestamp: wsPrice.timestamp,
+        source: 'upstox_ws',
+      }));
+      setError(null);
+      setLoading(false);
+    }
+  }, [wsPrice, market]);
+
+  // Fallback polling for COMEX (since we don't have real-time WebSocket for it)
+  useEffect(() => {
+    if (market !== 'comex') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await getLivePrice(asset, market);
+        if (data.status !== 'error') {
+          setPrice(data);
+          setError(null);
+        }
+      } catch (err) {
+        // Keep existing price on error
+      }
+    }, 5000); // Poll every 5 seconds for COMEX
+
     return () => clearInterval(interval);
   }, [asset, market]);
 
   const isPositive = (price?.change_percent ?? 0) >= 0;
   const currency = market === 'mcx' ? 'INR' : 'USD';
 
-  if (loading) {
+  if (loading && !price) {
     return (
       <div className="glass-card p-4 sm:p-6">
         <div className="skeleton h-4 w-24 rounded mb-4"></div>
@@ -60,7 +105,7 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
     );
   }
 
-  if (error || !price) {
+  if (error && !price) {
     return (
       <div className="glass-card p-4 sm:p-6">
         <div className="text-zinc-400 text-sm">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</div>
@@ -69,6 +114,8 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
       </div>
     );
   }
+
+  if (!price) return null;
 
   return (
     <div className={cn(
@@ -86,9 +133,18 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
       <div className="relative">
         <div className="flex items-center justify-between mb-2 sm:mb-3">
           <span className="text-zinc-400 text-xs sm:text-sm font-medium">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</span>
-          <span className="text-[10px] sm:text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded truncate max-w-[80px] sm:max-w-none">
-            {price.source?.replace('_', ' ')}
-          </span>
+          <div className="flex items-center gap-2">
+            {/* WebSocket connection indicator for MCX */}
+            {market === 'mcx' && (
+              <span className={cn(
+                "w-2 h-2 rounded-full",
+                isConnected ? "bg-green-500" : "bg-yellow-500 animate-pulse"
+              )} title={isConnected ? "Live" : "Connecting..."} />
+            )}
+            <span className="text-[10px] sm:text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded truncate max-w-[80px] sm:max-w-none">
+              {price.source?.replace('_', ' ')}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-baseline gap-2 sm:gap-3">

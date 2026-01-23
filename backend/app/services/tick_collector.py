@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.models.database import async_session_factory
 from app.models.tick_data import TickData, TickDataAggregated
 from app.services.upstox_client import upstox_client
+from app.services.price_broadcaster import price_broadcaster, PriceUpdate
 
 # Import protobuf for decoding Upstox messages
 try:
@@ -302,9 +303,26 @@ class TickCollector:
 
         self._tick_buffer.append(tick)
 
+        # Broadcast price update to WebSocket clients
+        if ltpc.ltp:
+            update = PriceUpdate(
+                asset="silver",
+                market="mcx",
+                symbol=instrument_key,
+                price=float(ltpc.ltp),
+                open=float(ohlc_data.open) if ohlc_data and ohlc_data.open else None,
+                high=float(ohlc_data.high) if ohlc_data and ohlc_data.high else None,
+                low=float(ohlc_data.low) if ohlc_data and ohlc_data.low else None,
+                close=float(ohlc_data.close) if ohlc_data and ohlc_data.close else float(ltpc.ltp),
+                change=float(ltpc.cp) if ltpc.cp else None,
+                volume=int(volume) if volume else None,
+            )
+            # Fire and forget - don't await to avoid blocking tick processing
+            asyncio.create_task(price_broadcaster.update_price(update))
+
         # Log periodically
         if self._stats["ticks_received"] % 100 == 0:
-            logger.info(f"Received {self._stats['ticks_received']} ticks, LTP: {ltpc.ltp}")
+            logger.info(f"Received {self._stats['ticks_received']} ticks, LTP: {ltpc.ltp}, WS clients: {price_broadcaster.callback_count}")
 
     async def _process_full_feed(self, instrument_key: str, feed: Dict) -> None:
         """Process full market data feed."""
@@ -350,6 +368,22 @@ class TickCollector:
 
         self._tick_buffer.append(tick)
 
+        # Broadcast price update to WebSocket clients
+        if ltpc.get("ltp"):
+            update = PriceUpdate(
+                asset="silver",
+                market="mcx",
+                symbol=instrument_key,
+                price=float(ltpc["ltp"]),
+                open=float(intraday_ohlc["open"]) if intraday_ohlc and intraday_ohlc.get("open") else None,
+                high=float(intraday_ohlc["high"]) if intraday_ohlc and intraday_ohlc.get("high") else None,
+                low=float(intraday_ohlc["low"]) if intraday_ohlc and intraday_ohlc.get("low") else None,
+                close=float(intraday_ohlc["close"]) if intraday_ohlc and intraday_ohlc.get("close") else float(ltpc["ltp"]),
+                change=float(ltpc["cp"]) if ltpc.get("cp") else None,
+                volume=int(intraday_ohlc["volume"]) if intraday_ohlc and intraday_ohlc.get("volume") else None,
+            )
+            asyncio.create_task(price_broadcaster.update_price(update))
+
     async def _process_ltpc_feed(self, instrument_key: str, ltpc: Dict) -> None:
         """Process LTP change feed (lighter than full feed)."""
         self._stats["ticks_received"] += 1
@@ -368,6 +402,17 @@ class TickCollector:
         }
 
         self._tick_buffer.append(tick)
+
+        # Broadcast price update to WebSocket clients
+        if ltpc.get("ltp"):
+            update = PriceUpdate(
+                asset="silver",
+                market="mcx",
+                symbol=instrument_key,
+                price=float(ltpc["ltp"]),
+                change=float(ltpc["cp"]) if ltpc.get("cp") else None,
+            )
+            asyncio.create_task(price_broadcaster.update_price(update))
 
     async def _periodic_flush(self) -> None:
         """Periodically flush tick buffer to database."""
