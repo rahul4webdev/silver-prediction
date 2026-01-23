@@ -34,9 +34,11 @@ export default function LiveIndicator({ asset = 'silver', showPrice = false }: L
               minimumFractionDigits: 2
             })}
           </span>
-          <span className={price.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}>
-            ({price.changePercent >= 0 ? '+' : ''}{price.changePercent.toFixed(2)}%)
-          </span>
+          {price.change_percent != null && (
+            <span className={price.change_percent >= 0 ? 'text-green-400' : 'text-red-400'}>
+              ({price.change_percent >= 0 ? '+' : ''}{price.change_percent.toFixed(2)}%)
+            </span>
+          )}
         </div>
       )}
     </div>
