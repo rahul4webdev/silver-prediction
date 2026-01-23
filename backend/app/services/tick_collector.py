@@ -305,6 +305,12 @@ class TickCollector:
 
         # Broadcast price update to WebSocket clients
         if ltpc.ltp:
+            # Calculate change_percent: ((current_price - prev_close) / prev_close) * 100
+            # ltpc.cp is the previous day's close price
+            change_percent = None
+            if ltpc.cp and float(ltpc.cp) > 0:
+                change_percent = ((float(ltpc.ltp) - float(ltpc.cp)) / float(ltpc.cp)) * 100
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
@@ -314,7 +320,8 @@ class TickCollector:
                 high=float(ohlc_data.high) if ohlc_data and ohlc_data.high else None,
                 low=float(ohlc_data.low) if ohlc_data and ohlc_data.low else None,
                 close=float(ohlc_data.close) if ohlc_data and ohlc_data.close else float(ltpc.ltp),
-                change=float(ltpc.cp) if ltpc.cp else None,
+                change=float(ltpc.ltp) - float(ltpc.cp) if ltpc.cp else None,  # Actual price change
+                change_percent=change_percent,
                 volume=int(volume) if volume else None,
             )
             # Fire and forget - don't await to avoid blocking tick processing
@@ -370,6 +377,11 @@ class TickCollector:
 
         # Broadcast price update to WebSocket clients
         if ltpc.get("ltp"):
+            # Calculate change_percent: ((current_price - prev_close) / prev_close) * 100
+            change_percent = None
+            if ltpc.get("cp") and float(ltpc["cp"]) > 0:
+                change_percent = ((float(ltpc["ltp"]) - float(ltpc["cp"])) / float(ltpc["cp"])) * 100
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
@@ -379,7 +391,8 @@ class TickCollector:
                 high=float(intraday_ohlc["high"]) if intraday_ohlc and intraday_ohlc.get("high") else None,
                 low=float(intraday_ohlc["low"]) if intraday_ohlc and intraday_ohlc.get("low") else None,
                 close=float(intraday_ohlc["close"]) if intraday_ohlc and intraday_ohlc.get("close") else float(ltpc["ltp"]),
-                change=float(ltpc["cp"]) if ltpc.get("cp") else None,
+                change=float(ltpc["ltp"]) - float(ltpc["cp"]) if ltpc.get("cp") else None,  # Actual price change
+                change_percent=change_percent,
                 volume=int(intraday_ohlc["volume"]) if intraday_ohlc and intraday_ohlc.get("volume") else None,
             )
             asyncio.create_task(price_broadcaster.update_price(update))
@@ -405,12 +418,18 @@ class TickCollector:
 
         # Broadcast price update to WebSocket clients
         if ltpc.get("ltp"):
+            # Calculate change_percent: ((current_price - prev_close) / prev_close) * 100
+            change_percent = None
+            if ltpc.get("cp") and float(ltpc["cp"]) > 0:
+                change_percent = ((float(ltpc["ltp"]) - float(ltpc["cp"])) / float(ltpc["cp"])) * 100
+
             update = PriceUpdate(
                 asset="silver",
                 market="mcx",
                 symbol=instrument_key,
                 price=float(ltpc["ltp"]),
-                change=float(ltpc["cp"]) if ltpc.get("cp") else None,
+                change=float(ltpc["ltp"]) - float(ltpc["cp"]) if ltpc.get("cp") else None,  # Actual price change
+                change_percent=change_percent,
             )
             asyncio.create_task(price_broadcaster.update_price(update))
 
