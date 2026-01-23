@@ -37,53 +37,75 @@ async def get_live_price(
     For COMEX: Uses Yahoo Finance directly.
     """
     try:
-        # For MCX silver, try Upstox first for real MCX data
-        if market == "mcx" and asset == "silver":
-            # Priority 1: Upstox (real MCX data)
-            if upstox_client.is_authenticated:
+        # For MCX assets, try specific methods first
+        if market == "mcx":
+            if asset == "silver":
+                # Priority 1: Upstox (real MCX data)
+                if upstox_client.is_authenticated:
+                    try:
+                        quote = await upstox_client.get_live_quote()
+                        if quote and quote.get("price"):
+                            return {
+                                "asset": asset,
+                                "market": market,
+                                "symbol": quote.get("symbol"),
+                                "price": quote["price"],
+                                "open": quote.get("open"),
+                                "high": quote.get("high"),
+                                "low": quote.get("low"),
+                                "change": quote.get("change"),
+                                "change_percent": quote.get("change_percent"),
+                                "volume": quote.get("volume"),
+                                "currency": "INR",
+                                "timestamp": datetime.now().isoformat(),
+                                "source": "upstox",
+                                "note": "Real MCX Silver futures data via Upstox API",
+                            }
+                    except UpstoxAPIError as e:
+                        logger.warning(f"Upstox quote fetch failed: {e}")
+                    except UpstoxAuthError as e:
+                        logger.warning(f"Upstox auth error: {e}")
+
+                # Priority 2: Silver Bees ETF (NSE)
                 try:
-                    quote = await upstox_client.get_live_quote()
-                    if quote and quote.get("price"):
+                    mcx_price = await yahoo_client.get_silver_price_inr()
+                    if mcx_price and mcx_price.get("price"):
                         return {
                             "asset": asset,
                             "market": market,
-                            "symbol": quote.get("symbol"),
-                            "price": quote["price"],
-                            "open": quote.get("open"),
-                            "high": quote.get("high"),
-                            "low": quote.get("low"),
-                            "change": quote.get("change"),
-                            "change_percent": quote.get("change_percent"),
-                            "volume": quote.get("volume"),
+                            "symbol": mcx_price.get("symbol"),
+                            "price": mcx_price["price"],
+                            "price_per_gram": mcx_price.get("price_per_gram"),
                             "currency": "INR",
+                            "change": mcx_price.get("change"),
+                            "change_percent": mcx_price.get("change_percent"),
                             "timestamp": datetime.now().isoformat(),
-                            "source": "upstox",
-                            "note": "Real MCX Silver futures data via Upstox API",
+                            "source": mcx_price.get("source", "yahoo_finance"),
+                            "note": "Price per kg. Silver Bees ETF is used as MCX proxy.",
                         }
-                except UpstoxAPIError as e:
-                    logger.warning(f"Upstox quote fetch failed: {e}")
-                except UpstoxAuthError as e:
-                    logger.warning(f"Upstox auth error: {e}")
+                except Exception as e:
+                    logger.warning(f"MCX silver price fetch failed: {e}")
 
-            # Priority 2: Silver Bees ETF (NSE)
-            try:
-                mcx_price = await yahoo_client.get_silver_price_inr()
-                if mcx_price and mcx_price.get("price"):
-                    return {
-                        "asset": asset,
-                        "market": market,
-                        "symbol": mcx_price.get("symbol"),
-                        "price": mcx_price["price"],
-                        "price_per_gram": mcx_price.get("price_per_gram"),
-                        "currency": "INR",
-                        "change": mcx_price.get("change"),
-                        "change_percent": mcx_price.get("change_percent"),
-                        "timestamp": datetime.now().isoformat(),
-                        "source": mcx_price.get("source", "yahoo_finance"),
-                        "note": "Price per kg. Silver Bees ETF is used as MCX proxy.",
-                    }
-            except Exception as e:
-                logger.warning(f"MCX silver price fetch failed: {e}")
+            elif asset == "gold":
+                # Try Gold Bees ETF (NSE)
+                try:
+                    mcx_price = await yahoo_client.get_gold_price_inr()
+                    if mcx_price and mcx_price.get("price"):
+                        return {
+                            "asset": asset,
+                            "market": market,
+                            "symbol": mcx_price.get("symbol"),
+                            "price": mcx_price["price"],
+                            "price_per_gram": mcx_price.get("price_per_gram"),
+                            "currency": "INR",
+                            "change": mcx_price.get("change"),
+                            "change_percent": mcx_price.get("change_percent"),
+                            "timestamp": datetime.now().isoformat(),
+                            "source": mcx_price.get("source", "yahoo_finance"),
+                            "note": "Price per 10g. Gold Bees ETF is used as MCX proxy.",
+                        }
+                except Exception as e:
+                    logger.warning(f"MCX gold price fetch failed: {e}")
 
         # Standard approach for COMEX or fallback
         price_info = await yahoo_client.get_current_price(asset)
@@ -213,26 +235,46 @@ async def get_historical_data(
             else:
                 period = "1y"
 
-            # For MCX, try Silver Bees ETF first (actual INR prices)
-            if market == "mcx" and asset == "silver":
-                try:
-                    df = await yahoo_client.get_silver_mcx(interval=interval, days=60)
-                    if not df.empty:
-                        raw_candles = yahoo_client.convert_to_candles(df)
-                        # Silver Bees is per gram, convert to per kg for MCX-like prices
-                        for candle in raw_candles:
-                            if candle.get("open"):
-                                candle["open"] = round(candle["open"] * 1000, 2)
-                            if candle.get("high"):
-                                candle["high"] = round(candle["high"] * 1000, 2)
-                            if candle.get("low"):
-                                candle["low"] = round(candle["low"] * 1000, 2)
-                            if candle.get("close"):
-                                candle["close"] = round(candle["close"] * 1000, 2)
-                        candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
-                        data_source = "silver_bees_etf"
-                except Exception as e:
-                    logger.warning(f"Silver Bees fetch failed, falling back to COMEX conversion: {e}")
+            # For MCX, try ETF data first (actual INR prices)
+            if market == "mcx":
+                if asset == "silver":
+                    try:
+                        df = await yahoo_client.get_silver_mcx(interval=interval, days=60)
+                        if not df.empty:
+                            raw_candles = yahoo_client.convert_to_candles(df)
+                            # Silver Bees is per gram, convert to per kg for MCX-like prices
+                            for candle in raw_candles:
+                                if candle.get("open"):
+                                    candle["open"] = round(candle["open"] * 1000, 2)
+                                if candle.get("high"):
+                                    candle["high"] = round(candle["high"] * 1000, 2)
+                                if candle.get("low"):
+                                    candle["low"] = round(candle["low"] * 1000, 2)
+                                if candle.get("close"):
+                                    candle["close"] = round(candle["close"] * 1000, 2)
+                            candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
+                            data_source = "silver_bees_etf"
+                    except Exception as e:
+                        logger.warning(f"Silver Bees fetch failed, falling back to COMEX conversion: {e}")
+                elif asset == "gold":
+                    try:
+                        df = await yahoo_client.get_gold_mcx(interval=interval, days=60)
+                        if not df.empty:
+                            raw_candles = yahoo_client.convert_to_candles(df)
+                            # Gold Bees is per gram, convert to per 10g for MCX-like prices
+                            for candle in raw_candles:
+                                if candle.get("open"):
+                                    candle["open"] = round(candle["open"] * 10, 2)
+                                if candle.get("high"):
+                                    candle["high"] = round(candle["high"] * 10, 2)
+                                if candle.get("low"):
+                                    candle["low"] = round(candle["low"] * 10, 2)
+                                if candle.get("close"):
+                                    candle["close"] = round(candle["close"] * 10, 2)
+                            candles = raw_candles[-limit:] if len(raw_candles) > limit else raw_candles
+                            data_source = "gold_bees_etf"
+                    except Exception as e:
+                        logger.warning(f"Gold Bees fetch failed, falling back to COMEX conversion: {e}")
 
             # If MCX data not available or for COMEX, use standard approach
             if not candles:

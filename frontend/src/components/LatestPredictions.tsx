@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { getLatestPrediction } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { Prediction, Market, Interval } from '@/lib/types';
+import type { Prediction, Market, Interval, Asset } from '@/lib/types';
 
 interface LatestPredictionsProps {
+  asset?: Asset;
   market: Market;
 }
 
@@ -18,7 +19,7 @@ const intervalLabels: Record<Interval, string> = {
   '1d': '1D',
 };
 
-export default function LatestPredictions({ market }: LatestPredictionsProps) {
+export default function LatestPredictions({ asset = 'silver', market }: LatestPredictionsProps) {
   const [predictions, setPredictions] = useState<Record<Interval, Prediction | null>>({
     '30m': null,
     '1h': null,
@@ -40,7 +41,7 @@ export default function LatestPredictions({ market }: LatestPredictionsProps) {
       await Promise.all(
         intervals.map(async (interval) => {
           try {
-            const pred = await getLatestPrediction('silver', market, interval);
+            const pred = await getLatestPrediction(asset, market, interval);
             results[interval] = pred;
           } catch {
             results[interval] = null;
@@ -55,7 +56,7 @@ export default function LatestPredictions({ market }: LatestPredictionsProps) {
     fetchAllPredictions();
     const refreshInterval = setInterval(fetchAllPredictions, 60000); // Refresh every minute
     return () => clearInterval(refreshInterval);
-  }, [market]);
+  }, [asset, market]);
 
   if (loading) {
     return (

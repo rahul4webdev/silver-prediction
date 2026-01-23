@@ -3,8 +3,13 @@
 import { useEffect, useState } from 'react';
 import { getPredictions } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { Prediction, Market, Interval } from '@/lib/types';
+import type { Prediction, Market, Interval, Asset } from '@/lib/types';
 import PriceChart from '@/components/PriceChart';
+
+const assets: { value: Asset; label: string; icon: string }[] = [
+  { value: 'silver', label: 'Silver', icon: '🥈' },
+  { value: 'gold', label: 'Gold', icon: '🥇' },
+];
 
 const markets: { value: Market; label: string }[] = [
   { value: 'mcx', label: 'MCX (India)' },
@@ -22,6 +27,7 @@ const intervals: { value: Interval | 'all'; label: string }[] = [
 export default function PredictionsPage() {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedAsset, setSelectedAsset] = useState<Asset>('silver');
   const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
   const [selectedInterval, setSelectedInterval] = useState<Interval | 'all'>('all');
 
@@ -30,7 +36,7 @@ export default function PredictionsPage() {
       try {
         setLoading(true);
         const intervalParam = selectedInterval === 'all' ? undefined : selectedInterval;
-        const data = await getPredictions('silver', selectedMarket, intervalParam, 100);
+        const data = await getPredictions(selectedAsset, selectedMarket, intervalParam, 100);
         setPredictions(data);
       } catch {
         setPredictions([]);
@@ -40,7 +46,7 @@ export default function PredictionsPage() {
     }
 
     fetchPredictions();
-  }, [selectedMarket, selectedInterval]);
+  }, [selectedAsset, selectedMarket, selectedInterval]);
 
   const formatPrice = (price: number, market: Market) => {
     if (market === 'mcx') {
@@ -82,10 +88,29 @@ export default function PredictionsPage() {
       </div>
 
       {/* Chart Section */}
-      <PriceChart market={selectedMarket} interval={selectedInterval === 'all' ? '1h' : selectedInterval} />
+      <PriceChart asset={selectedAsset} market={selectedMarket} interval={selectedInterval === 'all' ? '1h' : selectedInterval} />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4">
+        {/* Asset Filter */}
+        <div className="glass-card p-1 flex">
+          {assets.map((asset) => (
+            <button
+              key={asset.value}
+              onClick={() => setSelectedAsset(asset.value)}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5',
+                selectedAsset === asset.value
+                  ? 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
+            >
+              <span>{asset.icon}</span>
+              <span>{asset.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Market Filter */}
         <div className="glass-card p-1 flex">
           {markets.map((market) => (

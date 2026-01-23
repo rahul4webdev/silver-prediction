@@ -282,6 +282,108 @@ class YahooFinanceClient:
             start=start,
         )
 
+    async def get_gold_comex(
+        self,
+        interval: str = "30m",
+        days: int = 365,
+    ) -> pd.DataFrame:
+        """
+        Fetch COMEX gold historical data.
+
+        Args:
+            interval: Candle interval
+            days: Number of days of history
+
+        Returns:
+            DataFrame with gold OHLCV data
+        """
+        start = datetime.now() - timedelta(days=days)
+        return await self.get_historical_data(
+            symbol="gold",
+            interval=interval,
+            start=start,
+        )
+
+    async def get_gold_mcx(
+        self,
+        interval: str = "30m",
+        days: int = 60,
+    ) -> pd.DataFrame:
+        """
+        Fetch MCX Gold data using Gold Bees ETF as proxy.
+
+        Args:
+            interval: Candle interval
+            days: Number of days of history
+
+        Returns:
+            DataFrame with gold OHLCV data in INR
+        """
+        start = datetime.now() - timedelta(days=days)
+        return await self.get_historical_data(
+            symbol="gold_mcx",
+            interval=interval,
+            start=start,
+        )
+
+    async def get_gold_price_inr(self) -> Dict[str, Any]:
+        """
+        Get current gold price in INR.
+
+        First tries Gold Bees ETF, then falls back to
+        COMEX gold with USD/INR conversion.
+
+        Returns:
+            Dict with gold price data in INR
+        """
+        # Try Gold Bees ETF first (actual INR price)
+        try:
+            etf_price = await self.get_current_price("gold_mcx")
+            if etf_price and etf_price.get("price"):
+                # Gold Bees is per gram (0.01g per unit)
+                price_per_gram = etf_price["price"]
+                price_per_10g = price_per_gram * 10
+
+                return {
+                    "symbol": "GOLDBEES.NS",
+                    "price": price_per_10g,
+                    "price_per_gram": price_per_gram,
+                    "currency": "INR",
+                    "source": "gold_bees_etf",
+                    "change": etf_price.get("change"),
+                    "change_percent": etf_price.get("change_percent"),
+                    "timestamp": datetime.now(),
+                }
+        except Exception as e:
+            logger.warning(f"Gold Bees fetch failed: {e}")
+
+        # Fallback to COMEX + USD/INR conversion
+        try:
+            comex_price = await self.get_current_price("gold")
+            usd_inr = await self.get_usdinr_rate()
+
+            if comex_price and comex_price.get("price"):
+                # COMEX gold is per troy ounce, convert to per 10g (MCX standard)
+                # 1 troy ounce = 31.1035 grams
+                price_per_oz_usd = comex_price["price"]
+                price_per_gram_inr = (price_per_oz_usd / 31.1035) * usd_inr
+                price_per_10g_inr = price_per_gram_inr * 10
+
+                return {
+                    "symbol": "GC=F",
+                    "price": round(price_per_10g_inr, 2),
+                    "price_per_oz_usd": price_per_oz_usd,
+                    "usd_inr_rate": usd_inr,
+                    "currency": "INR",
+                    "source": "comex_converted",
+                    "change": comex_price.get("change"),
+                    "change_percent": comex_price.get("change_percent"),
+                    "timestamp": datetime.now(),
+                }
+        except Exception as e:
+            logger.error(f"COMEX gold fallback failed: {e}")
+            raise YahooFinanceError(f"Failed to fetch gold price: {e}")
+
     async def get_silver_price_inr(self) -> Dict[str, Any]:
         """
         Get current silver price in INR.

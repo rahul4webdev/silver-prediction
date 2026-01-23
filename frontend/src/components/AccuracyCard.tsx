@@ -3,9 +3,13 @@
 import { useEffect, useState } from 'react';
 import { getAccuracySummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { AccuracySummary } from '@/lib/types';
+import type { AccuracySummary, Asset } from '@/lib/types';
 
-export default function AccuracyCard() {
+interface AccuracyCardProps {
+  asset?: Asset;
+}
+
+export default function AccuracyCard({ asset = 'silver' }: AccuracyCardProps) {
   const [accuracy, setAccuracy] = useState<AccuracySummary | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -13,7 +17,7 @@ export default function AccuracyCard() {
     async function fetchAccuracy() {
       try {
         setLoading(true);
-        const data = await getAccuracySummary('silver', 30);
+        const data = await getAccuracySummary(asset, 30);
         setAccuracy(data);
       } catch {
         setAccuracy(null);
@@ -23,7 +27,7 @@ export default function AccuracyCard() {
     }
 
     fetchAccuracy();
-  }, []);
+  }, [asset]);
 
   if (loading) {
     return (

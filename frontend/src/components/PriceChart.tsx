@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { getPriceData } from '@/lib/api';
-import type { PriceCandle, Market } from '@/lib/types';
+import type { PriceCandle, Market, Asset } from '@/lib/types';
 
 interface PriceChartProps {
+  asset?: Asset;
   market: Market;
   interval?: string;
 }
@@ -23,7 +24,7 @@ interface VolumeData {
   color: string;
 }
 
-export default function PriceChart({ market, interval = '1h' }: PriceChartProps) {
+export default function PriceChart({ asset = 'silver', market, interval = '1h' }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -58,7 +59,7 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
       setLoading(true);
       setError(null);
 
-      const candles = await getPriceData('silver', market, interval, 200);
+      const candles = await getPriceData(asset, market, interval, 200);
 
       if (!mountedRef.current) return;
 
@@ -118,7 +119,7 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
         setLoading(false);
       }
     }
-  }, [market, interval]);
+  }, [asset, market, interval]);
 
   // Initialize chart when data is ready
   const initializeChart = useCallback(async () => {
@@ -351,7 +352,7 @@ export default function PriceChart({ market, interval = '1h' }: PriceChartProps)
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <div>
           <div className="flex items-center gap-3">
-            <h3 className="text-white font-semibold">Silver {market.toUpperCase()}</h3>
+            <h3 className="text-white font-semibold">{asset.charAt(0).toUpperCase() + asset.slice(1)} {market.toUpperCase()}</h3>
             {chartInfo.lastPrice && (
               <span className="text-lg font-bold text-white">
                 {formatPrice(chartInfo.lastPrice)}

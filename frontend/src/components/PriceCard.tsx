@@ -3,14 +3,15 @@
 import { useEffect, useState } from 'react';
 import { getLivePrice } from '@/lib/api';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
-import type { LivePrice } from '@/lib/types';
+import type { LivePrice, Asset } from '@/lib/types';
 import LatestPredictions from './LatestPredictions';
 
 interface PriceCardProps {
+  asset?: Asset;
   market: 'mcx' | 'comex';
 }
 
-export default function PriceCard({ market }: PriceCardProps) {
+export default function PriceCard({ asset = 'silver', market }: PriceCardProps) {
   const [price, setPrice] = useState<LivePrice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export default function PriceCard({ market }: PriceCardProps) {
     async function fetchPrice() {
       try {
         setLoading(true);
-        const data = await getLivePrice('silver', market);
+        const data = await getLivePrice(asset, market);
         if (data.status === 'error') {
           setError(data.message || 'Failed to fetch price');
         } else {
@@ -36,7 +37,7 @@ export default function PriceCard({ market }: PriceCardProps) {
     fetchPrice();
     const interval = setInterval(fetchPrice, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
-  }, [market]);
+  }, [asset, market]);
 
   const isPositive = (price?.change_percent ?? 0) >= 0;
   const currency = market === 'mcx' ? 'INR' : 'USD';
@@ -62,9 +63,9 @@ export default function PriceCard({ market }: PriceCardProps) {
   if (error || !price) {
     return (
       <div className="glass-card p-4 sm:p-6">
-        <div className="text-zinc-400 text-sm">{market.toUpperCase()} Silver</div>
+        <div className="text-zinc-400 text-sm">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</div>
         <div className="text-zinc-500 mt-2">Unable to load price</div>
-        <LatestPredictions market={market} />
+        <LatestPredictions asset={asset} market={market} />
       </div>
     );
   }
@@ -84,7 +85,7 @@ export default function PriceCard({ market }: PriceCardProps) {
 
       <div className="relative">
         <div className="flex items-center justify-between mb-2 sm:mb-3">
-          <span className="text-zinc-400 text-xs sm:text-sm font-medium">{market.toUpperCase()} Silver</span>
+          <span className="text-zinc-400 text-xs sm:text-sm font-medium">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</span>
           <span className="text-[10px] sm:text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded truncate max-w-[80px] sm:max-w-none">
             {price.source?.replace('_', ' ')}
           </span>
@@ -111,7 +112,7 @@ export default function PriceCard({ market }: PriceCardProps) {
         {/* Latest Predictions Section */}
         <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-white/10">
           <div className="text-[10px] sm:text-xs text-zinc-500 mb-2">Latest Predictions</div>
-          <LatestPredictions market={market} />
+          <LatestPredictions asset={asset} market={market} />
         </div>
       </div>
     </div>

@@ -52,8 +52,8 @@ export default function Navigation() {
             </svg>
           </div>
           <div className="hidden xs:block">
-            <h1 className="text-base sm:text-lg font-bold text-white">Silver Prediction</h1>
-            <p className="text-[10px] sm:text-xs text-zinc-400">MCX & COMEX Analytics</p>
+            <h1 className="text-base sm:text-lg font-bold text-white">Precious Metals</h1>
+            <p className="text-[10px] sm:text-xs text-zinc-400">Silver & Gold Predictions</p>
           </div>
         </Link>
 

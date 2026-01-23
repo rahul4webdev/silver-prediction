@@ -1,7 +1,7 @@
 {
-  "name": "Silver Prediction System",
-  "short_name": "Silver Pred",
-  "description": "Real-time silver price predictions for MCX and COMEX markets",
+  "name": "Precious Metals Prediction",
+  "short_name": "Metal Pred",
+  "description": "Real-time silver and gold price predictions for MCX and COMEX markets",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0f1a",

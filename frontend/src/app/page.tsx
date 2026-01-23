@@ -6,7 +6,12 @@ import PredictionCard from '@/components/PredictionCard';
 import PriceChart from '@/components/PriceChart';
 import AccuracyCard from '@/components/AccuracyCard';
 import SentimentCard from '@/components/SentimentCard';
-import type { Market, Interval } from '@/lib/types';
+import type { Asset, Market, Interval } from '@/lib/types';
+
+const assets: { value: Asset; label: string; icon: string }[] = [
+  { value: 'silver', label: 'Silver', icon: '🥈' },
+  { value: 'gold', label: 'Gold', icon: '🥇' },
+];
 
 const intervals: { value: Interval; label: string; shortLabel: string }[] = [
   { value: '30m', label: '30 Min', shortLabel: '30m' },
@@ -16,13 +21,32 @@ const intervals: { value: Interval; label: string; shortLabel: string }[] = [
 ];
 
 export default function Dashboard() {
+  const [selectedAsset, setSelectedAsset] = useState<Asset>('silver');
   const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
   const [selectedInterval, setSelectedInterval] = useState<Interval>('1h');
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Market & Interval Selector */}
+      {/* Asset, Market & Interval Selectors */}
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+        {/* Asset Toggle */}
+        <div className="glass-card p-1 flex">
+          {assets.map((asset) => (
+            <button
+              key={asset.value}
+              onClick={() => setSelectedAsset(asset.value)}
+              className={`flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${
+                selectedAsset === asset.value
+                  ? 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-400'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <span>{asset.icon}</span>
+              <span>{asset.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Market Toggle */}
         <div className="glass-card p-1 flex flex-1 sm:flex-initial">
           <button
@@ -70,15 +94,16 @@ export default function Dashboard() {
 
       {/* Top Row: Price Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-        <PriceCard market="mcx" />
-        <PriceCard market="comex" />
+        <PriceCard asset={selectedAsset} market="mcx" />
+        <PriceCard asset={selectedAsset} market="comex" />
       </div>
 
       {/* Main Chart */}
       <div className="glass-card p-3 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-          <h2 className="text-base sm:text-lg font-semibold text-white">
-            Silver - {selectedMarket.toUpperCase()}
+          <h2 className="text-base sm:text-lg font-semibold text-white flex items-center gap-2">
+            <span>{selectedAsset === 'gold' ? '🥇' : '🥈'}</span>
+            {selectedAsset.charAt(0).toUpperCase() + selectedAsset.slice(1)} - {selectedMarket.toUpperCase()}
           </h2>
           <span className="text-xs text-zinc-500">
             {selectedInterval === '30m' && '30 Minute Candles'}
@@ -88,15 +113,15 @@ export default function Dashboard() {
           </span>
         </div>
         <div className="h-[300px] sm:h-auto">
-          <PriceChart market={selectedMarket} interval={selectedInterval} />
+          <PriceChart asset={selectedAsset} market={selectedMarket} interval={selectedInterval} />
         </div>
       </div>
 
       {/* Bottom Row: Prediction, Accuracy & Sentiment */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        <PredictionCard market={selectedMarket} interval={selectedInterval} />
-        <AccuracyCard />
-        <SentimentCard asset="silver" />
+        <PredictionCard asset={selectedAsset} market={selectedMarket} interval={selectedInterval} />
+        <AccuracyCard asset={selectedAsset} />
+        <SentimentCard asset={selectedAsset} />
       </div>
 
       {/* Quick Stats - Hidden on mobile to save space */}
@@ -115,12 +140,17 @@ export default function Dashboard() {
           </div>
           <div className="text-center p-3 sm:p-4 bg-white/5 rounded-xl">
             <div className="text-xs text-zinc-500 mb-1">Asset</div>
-            <div className="text-base sm:text-lg font-bold text-white">Silver</div>
+            <div className="text-base sm:text-lg font-bold text-white flex items-center justify-center gap-1">
+              <span>{selectedAsset === 'gold' ? '🥇' : '🥈'}</span>
+              {selectedAsset.charAt(0).toUpperCase() + selectedAsset.slice(1)}
+            </div>
           </div>
           <div className="text-center p-3 sm:p-4 bg-white/5 rounded-xl">
             <div className="text-xs text-zinc-500 mb-1">Data Source</div>
             <div className="text-base sm:text-lg font-bold text-cyan-400">
-              {selectedMarket === 'mcx' ? 'Silver Bees ETF' : 'Yahoo Finance'}
+              {selectedMarket === 'mcx'
+                ? (selectedAsset === 'gold' ? 'Gold Bees ETF' : 'Silver Bees ETF')
+                : 'Yahoo Finance'}
             </div>
           </div>
         </div>

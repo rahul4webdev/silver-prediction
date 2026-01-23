@@ -107,5 +107,6 @@ export interface AccuracySummary {
   };
 }
 
+export type Asset = 'silver' | 'gold';
 export type Market = 'mcx' | 'comex';
 export type Interval = '30m' | '1h' | '4h' | '1d';

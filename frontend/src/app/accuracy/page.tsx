@@ -3,7 +3,12 @@
 import { useEffect, useState } from 'react';
 import { getAccuracySummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { AccuracySummary, Market } from '@/lib/types';
+import type { AccuracySummary, Market, Asset } from '@/lib/types';
+
+const assets: { value: Asset; label: string; icon: string }[] = [
+  { value: 'silver', label: 'Silver', icon: '🥈' },
+  { value: 'gold', label: 'Gold', icon: '🥇' },
+];
 
 const markets: { value: Market; label: string }[] = [
   { value: 'mcx', label: 'MCX (India)' },
@@ -19,6 +24,7 @@ const periods = [
 export default function AccuracyPage() {
   const [accuracy, setAccuracy] = useState<AccuracySummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedAsset, setSelectedAsset] = useState<Asset>('silver');
   const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
   const [selectedPeriod, setSelectedPeriod] = useState(30);
 
@@ -26,7 +32,7 @@ export default function AccuracyPage() {
     async function fetchAccuracy() {
       try {
         setLoading(true);
-        const data = await getAccuracySummary('silver', selectedPeriod);
+        const data = await getAccuracySummary(selectedAsset, selectedPeriod);
         setAccuracy(data);
       } catch {
         setAccuracy(null);
@@ -36,7 +42,7 @@ export default function AccuracyPage() {
     }
 
     fetchAccuracy();
-  }, [selectedMarket, selectedPeriod]);
+  }, [selectedAsset, selectedMarket, selectedPeriod]);
 
   const MetricCard = ({
     title,
@@ -155,6 +161,25 @@ export default function AccuracyPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4">
+        {/* Asset Filter */}
+        <div className="glass-card p-1 flex">
+          {assets.map((asset) => (
+            <button
+              key={asset.value}
+              onClick={() => setSelectedAsset(asset.value)}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5',
+                selectedAsset === asset.value
+                  ? 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-400'
+                  : 'text-zinc-400 hover:text-white'
+              )}
+            >
+              <span>{asset.icon}</span>
+              <span>{asset.label}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="glass-card p-1 flex">
           {markets.map((market) => (
             <button
