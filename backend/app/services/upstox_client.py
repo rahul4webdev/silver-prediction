@@ -229,10 +229,13 @@ class UpstoxClient:
             asset_symbol = instrument.get("asset_symbol", "")
 
             # Look for SILVERM (Silver Mini) futures - check name, asset_symbol, or trading_symbol
+            # Must match SILVERM but NOT SILVERMIC (Silver Micro)
+            trading_symbol_upper = trading_symbol.upper()
             is_silver_mini = (
-                "SILVERM" in trading_symbol.upper() or
-                asset_symbol == "SILVERM" or
-                (name == "SILVER" and "SILVERM" in asset_symbol)
+                # Match SILVERM but exclude SILVERMIC
+                (trading_symbol_upper.startswith("SILVERM") and "SILVERMIC" not in trading_symbol_upper) or
+                (asset_symbol == "SILVERM" and "SILVERMIC" not in trading_symbol_upper) or
+                (name == "SILVER" and asset_symbol == "SILVERM")
             )
 
             if is_silver_mini and instrument_type == "FUT":
@@ -265,11 +268,15 @@ class UpstoxClient:
             logger.info(f"Selected MCX Silver: {selected['trading_symbol']} (key: {selected['instrument_key']})")
             return selected["instrument_key"]
 
-        # Fallback: Look for any SILVER futures (not just SILVERM)
+        # Fallback: Look for any SILVER futures (not just SILVERM) but exclude SILVERMIC
         for key, instrument in self._instruments_cache.items():
             trading_symbol = instrument.get("trading_symbol", "") or instrument.get("tradingsymbol", "")
+            trading_symbol_upper = trading_symbol.upper()
             name = instrument.get("name", "")
-            if (name == "SILVER" or "SILVER" in trading_symbol.upper()) and instrument.get("instrument_type") == "FUT":
+            # Exclude SILVERMIC from fallback as well
+            if (name == "SILVER" or "SILVER" in trading_symbol_upper) and \
+               "SILVERMIC" not in trading_symbol_upper and \
+               instrument.get("instrument_type") == "FUT":
                 logger.info(f"Fallback MCX Silver: {trading_symbol}")
                 return instrument.get("instrument_key")
 
