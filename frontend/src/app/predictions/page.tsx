@@ -290,7 +290,7 @@ export default function PredictionsPage() {
                         </span>
                       </td>
                       <td className="p-4 text-right">
-                        {verification ? (
+                        {verification && verification.actual_price != null ? (
                           <span className={cn(
                             'text-sm font-medium',
                             verification.is_direction_correct ? 'text-green-400' : 'text-red-400'
@@ -302,7 +302,7 @@ export default function PredictionsPage() {
                         )}
                       </td>
                       <td className="p-4 text-right">
-                        {verification ? (
+                        {verification && verification.price_error_percent != null ? (
                           <span className={cn(
                             'text-sm font-medium',
                             Math.abs(verification.price_error_percent) < 1 ? 'text-green-400' :
