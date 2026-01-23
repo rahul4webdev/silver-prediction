@@ -237,7 +237,7 @@ class Prediction(Base):
         """Convert to dictionary for API response."""
         return {
             "id": self.id,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
             "asset": self.asset,
             "market": self.market,
             "interval": self.interval,
