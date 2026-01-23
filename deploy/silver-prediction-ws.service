@@ -1,0 +1,16 @@
+[Unit]
+Description=Silver Prediction WebSocket Server
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=predi3169
+Group=predi3169
+WorkingDirectory=/home/predictionapi.gahfaudio.in/public_html/backend
+Environment="PATH=/home/predictionapi.gahfaudio.in/public_html/venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/predictionapi.gahfaudio.in/public_html/venv/bin/python websocket_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
