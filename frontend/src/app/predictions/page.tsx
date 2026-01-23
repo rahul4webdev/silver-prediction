@@ -37,7 +37,17 @@ export default function PredictionsPage() {
         setLoading(true);
         const intervalParam = selectedInterval === 'all' ? undefined : selectedInterval;
         const data = await getPredictions(selectedAsset, selectedMarket, intervalParam, 100);
-        setPredictions(data);
+
+        // Filter to show only today's predictions
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayPredictions = data.filter(p => {
+          const predTime = new Date(p.prediction_time);
+          predTime.setHours(0, 0, 0, 0);
+          return predTime.getTime() === today.getTime();
+        });
+
+        setPredictions(todayPredictions);
       } catch {
         setPredictions([]);
       } finally {
@@ -83,8 +93,8 @@ export default function PredictionsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="glass-card p-6">
-        <h1 className="text-2xl font-bold text-white mb-2">Predictions History</h1>
-        <p className="text-zinc-400">View all predictions with their outcomes and confidence intervals.</p>
+        <h1 className="text-2xl font-bold text-white mb-2">Today&apos;s Predictions</h1>
+        <p className="text-zinc-400">View today&apos;s predictions with their outcomes and confidence intervals.</p>
       </div>
 
       {/* Chart Section */}
