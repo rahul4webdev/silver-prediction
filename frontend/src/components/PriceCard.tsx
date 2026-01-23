@@ -108,7 +108,10 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
   if (error && !price) {
     return (
       <div className="glass-card p-4 sm:p-6">
-        <div className="text-zinc-400 text-sm">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</div>
+        <div className="text-zinc-400 text-sm">
+          {market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}
+          {market === 'mcx' && asset === 'silver' && <span className="text-zinc-500"> (SILVERM)</span>}
+        </div>
         <div className="text-zinc-500 mt-2">Unable to load price</div>
         <LatestPredictions asset={asset} market={market} />
       </div>
@@ -132,7 +135,10 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
 
       <div className="relative">
         <div className="flex items-center justify-between mb-2 sm:mb-3">
-          <span className="text-zinc-400 text-xs sm:text-sm font-medium">{market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}</span>
+          <span className="text-zinc-400 text-xs sm:text-sm font-medium">
+            {market.toUpperCase()} {asset.charAt(0).toUpperCase() + asset.slice(1)}
+            {market === 'mcx' && asset === 'silver' && <span className="text-zinc-500"> (SILVERM)</span>}
+          </span>
           <div className="flex items-center gap-2">
             {/* WebSocket connection indicator for MCX */}
             {market === 'mcx' && (
