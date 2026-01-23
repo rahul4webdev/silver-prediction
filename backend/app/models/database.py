@@ -70,6 +70,10 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+# Alias for backwards compatibility
+get_db_session = get_db_context
+
+
 async def init_db() -> None:
     """
     Initialize database - create tables and optionally enable TimescaleDB extension.
