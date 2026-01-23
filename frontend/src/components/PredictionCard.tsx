@@ -34,7 +34,7 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
 
   if (loading) {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <div className="skeleton h-4 w-32 rounded mb-4"></div>
         <div className="skeleton h-8 w-24 rounded mb-4"></div>
         <div className="skeleton h-4 w-full rounded mb-2"></div>
@@ -45,7 +45,7 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
 
   if (!prediction) {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <div className="text-zinc-400 text-sm mb-2">Latest Prediction</div>
         <div className="text-zinc-500">No predictions available yet</div>
         <p className="text-xs text-zinc-600 mt-2">
@@ -59,20 +59,20 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
   const confidence = prediction.direction_confidence * 100;
 
   return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-zinc-400 text-sm font-medium">Latest Prediction</span>
-        <span className="text-xs text-zinc-500">{prediction.interval}</span>
+    <div className="glass-card p-4 sm:p-6">
+      <div className="flex items-center justify-between mb-3 sm:mb-4">
+        <span className="text-zinc-400 text-xs sm:text-sm font-medium">Latest Prediction</span>
+        <span className="text-[10px] sm:text-xs text-zinc-500">{prediction.interval}</span>
       </div>
 
       {/* Direction Badge */}
       <div className={cn(
-        "inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold mb-4",
+        "inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-bold mb-3 sm:mb-4",
         isBullish
           ? "bg-green-500/20 text-green-400 border border-green-500/30"
           : "bg-red-500/20 text-red-400 border border-red-500/30"
       )}>
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           {isBullish ? (
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
           ) : (
@@ -83,12 +83,12 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
       </div>
 
       {/* Confidence */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between text-sm mb-1">
+      <div className="mb-3 sm:mb-4">
+        <div className="flex items-center justify-between text-xs sm:text-sm mb-1">
           <span className="text-zinc-400">Confidence</span>
           <span className="text-cyan-400 font-semibold">{confidence.toFixed(1)}%</span>
         </div>
-        <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+        <div className="h-1.5 sm:h-2 bg-white/5 rounded-full overflow-hidden">
           <div
             className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all"
             style={{ width: `${confidence}%` }}
@@ -97,17 +97,17 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
       </div>
 
       {/* Price targets */}
-      <div className="grid grid-cols-2 gap-4 text-sm">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm">
         <div>
-          <div className="text-zinc-500 text-xs">Current</div>
-          <div className="text-white font-medium">
+          <div className="text-zinc-500 text-[10px] sm:text-xs">Current</div>
+          <div className="text-white font-medium text-sm sm:text-base">
             {formatCurrency(prediction.current_price, currency)}
           </div>
         </div>
         <div>
-          <div className="text-zinc-500 text-xs">Predicted</div>
+          <div className="text-zinc-500 text-[10px] sm:text-xs">Predicted</div>
           <div className={cn(
-            "font-medium",
+            "font-medium text-sm sm:text-base",
             isBullish ? "text-green-400" : "text-red-400"
           )}>
             {formatCurrency(prediction.predicted_price, currency)}
@@ -116,8 +116,8 @@ export default function PredictionCard({ market, interval }: PredictionCardProps
       </div>
 
       {/* Target time */}
-      <div className="mt-4 pt-4 border-t border-white/5">
-        <div className="flex items-center justify-between text-xs">
+      <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-white/5">
+        <div className="flex items-center justify-between text-[10px] sm:text-xs">
           <span className="text-zinc-500">Target Time</span>
           <span className="text-zinc-300">{formatDateTime(prediction.target_time)}</span>
         </div>

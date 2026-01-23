@@ -43,15 +43,15 @@ export default function PriceCard({ market }: PriceCardProps) {
 
   if (loading) {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <div className="skeleton h-4 w-24 rounded mb-4"></div>
-        <div className="skeleton h-10 w-40 rounded mb-2"></div>
+        <div className="skeleton h-8 sm:h-10 w-32 sm:w-40 rounded mb-2"></div>
         <div className="skeleton h-4 w-20 rounded"></div>
         <div className="grid grid-cols-4 gap-2 mt-4">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="bg-white/5 rounded-lg p-2 animate-pulse">
-              <div className="h-3 w-8 bg-white/10 rounded mb-1 mx-auto"></div>
-              <div className="h-4 w-12 bg-white/10 rounded mx-auto"></div>
+              <div className="h-3 w-6 sm:w-8 bg-white/10 rounded mb-1 mx-auto"></div>
+              <div className="h-4 w-10 sm:w-12 bg-white/10 rounded mx-auto"></div>
             </div>
           ))}
         </div>
@@ -61,7 +61,7 @@ export default function PriceCard({ market }: PriceCardProps) {
 
   if (error || !price) {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <div className="text-zinc-400 text-sm">{market.toUpperCase()} Silver</div>
         <div className="text-zinc-500 mt-2">Unable to load price</div>
         <LatestPredictions market={market} />
@@ -71,7 +71,7 @@ export default function PriceCard({ market }: PriceCardProps) {
 
   return (
     <div className={cn(
-      "glass-card p-6 relative overflow-hidden",
+      "glass-card p-4 sm:p-6 relative overflow-hidden",
       isPositive ? "glow-success" : "glow-danger"
     )}>
       {/* Background gradient */}
@@ -83,19 +83,19 @@ export default function PriceCard({ market }: PriceCardProps) {
       )} />
 
       <div className="relative">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-zinc-400 text-sm font-medium">{market.toUpperCase()} Silver</span>
-          <span className="text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded">
+        <div className="flex items-center justify-between mb-2 sm:mb-3">
+          <span className="text-zinc-400 text-xs sm:text-sm font-medium">{market.toUpperCase()} Silver</span>
+          <span className="text-[10px] sm:text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded truncate max-w-[80px] sm:max-w-none">
             {price.source?.replace('_', ' ')}
           </span>
         </div>
 
-        <div className="flex items-baseline gap-3">
-          <div className="text-3xl font-bold text-white">
+        <div className="flex items-baseline gap-2 sm:gap-3">
+          <div className="text-2xl sm:text-3xl font-bold text-white">
             {formatCurrency(price.price, currency)}
           </div>
           <div className={cn(
-            "text-sm font-medium",
+            "text-xs sm:text-sm font-medium",
             isPositive ? "text-bullish" : "text-bearish"
           )}>
             {price.change_percent !== undefined && formatPercent(price.change_percent)}
@@ -103,14 +103,14 @@ export default function PriceCard({ market }: PriceCardProps) {
         </div>
 
         {market === 'mcx' && (
-          <div className="text-xs text-zinc-500 mt-1">
+          <div className="text-[10px] sm:text-xs text-zinc-500 mt-1">
             Price per kg
           </div>
         )}
 
         {/* Latest Predictions Section */}
-        <div className="mt-4 pt-4 border-t border-white/10">
-          <div className="text-xs text-zinc-500 mb-2">Latest Predictions</div>
+        <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-white/10">
+          <div className="text-[10px] sm:text-xs text-zinc-500 mb-2">Latest Predictions</div>
           <LatestPredictions market={market} />
         </div>
       </div>
