@@ -31,6 +31,15 @@ export default function PredictionsPage() {
   const [selectedMarket, setSelectedMarket] = useState<Market>('mcx');
   const [selectedInterval, setSelectedInterval] = useState<Interval | 'all'>('all');
 
+  // Stats
+  const [stats, setStats] = useState({
+    total: 0,
+    successful: 0,
+    failed: 0,
+    pending: 0,
+    accuracy: 0,
+  });
+
   useEffect(() => {
     async function fetchPredictions() {
       try {
@@ -48,6 +57,20 @@ export default function PredictionsPage() {
         });
 
         setPredictions(todayPredictions);
+
+        // Calculate stats
+        const verified = todayPredictions.filter(p => p.verification);
+        const successful = verified.filter(p => p.verification?.is_direction_correct);
+        const failed = verified.filter(p => !p.verification?.is_direction_correct);
+        const pending = todayPredictions.filter(p => !p.verification);
+
+        setStats({
+          total: todayPredictions.length,
+          successful: successful.length,
+          failed: failed.length,
+          pending: pending.length,
+          accuracy: verified.length > 0 ? (successful.length / verified.length) * 100 : 0,
+        });
       } catch {
         setPredictions([]);
       } finally {
@@ -58,7 +81,7 @@ export default function PredictionsPage() {
     fetchPredictions();
   }, [selectedAsset, selectedMarket, selectedInterval]);
 
-  const formatPrice = (price: number, market: Market) => {
+  const formatPrice = (price: number, market: string) => {
     if (market === 'mcx') {
       return `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
     }
@@ -68,25 +91,22 @@ export default function PredictionsPage() {
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
     return date.toLocaleString('en-IN', {
-      month: 'short',
       day: 'numeric',
+      month: 'short',
+      year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
     });
   };
 
-  const getCI80 = (prediction: Prediction) => {
-    if (prediction.confidence_intervals?.ci_80) {
-      return {
-        lower: prediction.confidence_intervals.ci_80.lower,
-        upper: prediction.confidence_intervals.ci_80.upper,
-      };
-    }
-    return null;
-  };
-
-  const getVerification = (prediction: Prediction) => {
-    return prediction.verification;
+  const getIntervalLabel = (interval: string) => {
+    const labels: Record<string, string> = {
+      '30m': '30 Min',
+      '1h': '1 Hour',
+      '4h': '4 Hours',
+      '1d': 'Daily',
+    };
+    return labels[interval] || interval;
   };
 
   return (
@@ -99,6 +119,30 @@ export default function PredictionsPage() {
 
       {/* Chart Section */}
       <PriceChart asset={selectedAsset} market={selectedMarket} interval={selectedInterval === 'all' ? '1h' : selectedInterval} />
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="glass-card p-4 text-center">
+          <div className="text-3xl font-bold text-white">{stats.total}</div>
+          <div className="text-xs text-zinc-500 mt-1">Total Predictions</div>
+        </div>
+        <div className="glass-card p-4 text-center">
+          <div className="text-3xl font-bold text-green-400">{stats.successful}</div>
+          <div className="text-xs text-zinc-500 mt-1">Successful</div>
+        </div>
+        <div className="glass-card p-4 text-center">
+          <div className="text-3xl font-bold text-red-400">{stats.failed}</div>
+          <div className="text-xs text-zinc-500 mt-1">Failed</div>
+        </div>
+        <div className="glass-card p-4 text-center">
+          <div className="text-3xl font-bold text-yellow-400">{stats.pending}</div>
+          <div className="text-xs text-zinc-500 mt-1">Pending</div>
+        </div>
+        <div className="glass-card p-4 text-center">
+          <div className="text-3xl font-bold text-cyan-400">{stats.accuracy.toFixed(1)}%</div>
+          <div className="text-xs text-zinc-500 mt-1">Accuracy</div>
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4">
@@ -167,7 +211,7 @@ export default function PredictionsPage() {
           </div>
         ) : predictions.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-zinc-400">No predictions found for this filter.</p>
+            <p className="text-zinc-400">No predictions found for today.</p>
             <p className="text-xs text-zinc-600 mt-2">
               Try selecting a different interval or market.
             </p>
@@ -178,20 +222,19 @@ export default function PredictionsPage() {
               <thead>
                 <tr className="border-b border-white/5">
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Time</th>
-                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Interval</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Market</th>
+                  <th className="text-left text-xs text-zinc-500 font-medium p-4">Type</th>
                   <th className="text-left text-xs text-zinc-500 font-medium p-4">Direction</th>
                   <th className="text-right text-xs text-zinc-500 font-medium p-4">Current</th>
                   <th className="text-right text-xs text-zinc-500 font-medium p-4">Predicted</th>
                   <th className="text-right text-xs text-zinc-500 font-medium p-4">Actual</th>
-                  <th className="text-right text-xs text-zinc-500 font-medium p-4">80% CI</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium p-4">Error %</th>
                   <th className="text-center text-xs text-zinc-500 font-medium p-4">Result</th>
                 </tr>
               </thead>
               <tbody>
                 {predictions.map((prediction, index) => {
-                  const ci80 = getCI80(prediction);
-                  const verification = getVerification(prediction);
-
+                  const verification = prediction.verification;
                   return (
                     <tr
                       key={prediction.id || index}
@@ -206,8 +249,18 @@ export default function PredictionsPage() {
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className="text-sm text-zinc-300 uppercase">
-                          {prediction.interval}
+                        <span className={cn(
+                          'inline-flex px-2 py-1 rounded-full text-xs font-medium',
+                          prediction.market === 'mcx'
+                            ? 'bg-orange-500/20 text-orange-400'
+                            : 'bg-blue-500/20 text-blue-400'
+                        )}>
+                          {prediction.market.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className="text-sm text-zinc-300">
+                          {getIntervalLabel(prediction.interval)}
                         </span>
                       </td>
                       <td className="p-4">
@@ -228,12 +281,12 @@ export default function PredictionsPage() {
                       </td>
                       <td className="p-4 text-right">
                         <span className="text-sm text-white">
-                          {formatPrice(prediction.current_price, selectedMarket)}
+                          {formatPrice(prediction.current_price, prediction.market)}
                         </span>
                       </td>
                       <td className="p-4 text-right">
                         <span className="text-sm text-cyan-400 font-medium">
-                          {formatPrice(prediction.predicted_price, selectedMarket)}
+                          {formatPrice(prediction.predicted_price, prediction.market)}
                         </span>
                       </td>
                       <td className="p-4 text-right">
@@ -242,40 +295,40 @@ export default function PredictionsPage() {
                             'text-sm font-medium',
                             verification.is_direction_correct ? 'text-green-400' : 'text-red-400'
                           )}>
-                            {formatPrice(verification.actual_price, selectedMarket)}
+                            {formatPrice(verification.actual_price, prediction.market)}
                           </span>
                         ) : (
                           <span className="text-sm text-zinc-500">-</span>
                         )}
                       </td>
                       <td className="p-4 text-right">
-                        <span className="text-xs text-zinc-400">
-                          {ci80 ? (
-                            <>
-                              {formatPrice(ci80.lower, selectedMarket)}
-                              {' - '}
-                              {formatPrice(ci80.upper, selectedMarket)}
-                            </>
-                          ) : (
-                            '-'
-                          )}
-                        </span>
+                        {verification ? (
+                          <span className={cn(
+                            'text-sm font-medium',
+                            Math.abs(verification.price_error_percent) < 1 ? 'text-green-400' :
+                            Math.abs(verification.price_error_percent) < 2 ? 'text-yellow-400' : 'text-red-400'
+                          )}>
+                            {verification.price_error_percent > 0 ? '+' : ''}
+                            {verification.price_error_percent.toFixed(2)}%
+                          </span>
+                        ) : (
+                          <span className="text-sm text-zinc-500">-</span>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         {verification ? (
                           <span className={cn(
-                            'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium',
+                            'inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium',
                             verification.is_direction_correct
                               ? 'bg-green-500/20 text-green-400'
                               : 'bg-red-500/20 text-red-400'
                           )}>
-                            {verification.is_direction_correct ? '✓ Correct' : '✗ Wrong'}
-                            {verification.within_ci_80 && (
-                              <span className="opacity-60">(in CI)</span>
-                            )}
+                            {verification.is_direction_correct ? '✓ Success' : '✗ Failed'}
                           </span>
                         ) : (
-                          <span className="text-xs text-zinc-500">Pending</span>
+                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400">
+                            ⏳ Pending
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -286,39 +339,6 @@ export default function PredictionsPage() {
           </div>
         )}
       </div>
-
-      {/* Stats Summary */}
-      {predictions.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="glass-card p-4 text-center">
-            <div className="text-2xl font-bold text-white">{predictions.length}</div>
-            <div className="text-xs text-zinc-500">Total Predictions</div>
-          </div>
-          <div className="glass-card p-4 text-center">
-            <div className="text-2xl font-bold text-white">
-              {predictions.filter(p => p.verification).length}
-            </div>
-            <div className="text-xs text-zinc-500">Verified</div>
-          </div>
-          <div className="glass-card p-4 text-center">
-            <div className="text-2xl font-bold text-green-400">
-              {predictions.filter(p => p.verification?.is_direction_correct).length}
-            </div>
-            <div className="text-xs text-zinc-500">Correct</div>
-          </div>
-          <div className="glass-card p-4 text-center">
-            <div className="text-2xl font-bold text-cyan-400">
-              {(() => {
-                const verified = predictions.filter(p => p.verification);
-                if (verified.length === 0) return '0%';
-                const correct = verified.filter(p => p.verification?.is_direction_correct).length;
-                return `${((correct / verified.length) * 100).toFixed(1)}%`;
-              })()}
-            </div>
-            <div className="text-xs text-zinc-500">Accuracy</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
