@@ -207,3 +207,140 @@ async def send_custom_alert(
     )
 
     return {"status": "success" if success else "failed"}
+
+
+@router.post("/daily-report")
+async def send_daily_report_now(
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Manually trigger the daily performance report.
+    Shows prediction accuracy for today.
+    """
+    if not telegram_notifier.is_configured:
+        raise HTTPException(status_code=400, detail="Telegram not configured")
+
+    from sqlalchemy import text
+    from datetime import date as date_type
+
+    today = date_type.today()
+
+    # Get all verified predictions for today
+    result = await db.execute(text("""
+        SELECT
+            interval,
+            market,
+            COUNT(*) as total,
+            SUM(CASE WHEN is_direction_correct = true THEN 1 ELSE 0 END) as successful,
+            SUM(CASE WHEN is_direction_correct = false THEN 1 ELSE 0 END) as failed
+        FROM predictions
+        WHERE DATE(prediction_time) = :today
+        AND verified_at IS NOT NULL
+        GROUP BY interval, market
+    """), {"today": today})
+
+    rows = result.fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No verified predictions found for today")
+
+    # Aggregate stats
+    total_predictions = 0
+    successful_predictions = 0
+    failed_predictions = 0
+    interval_stats = {}
+    market_stats = {}
+
+    for row in rows:
+        interval = row[0]
+        market = row[1]
+        total = row[2]
+        success = row[3] or 0
+        failed = row[4] or 0
+
+        total_predictions += total
+        successful_predictions += success
+        failed_predictions += failed
+
+        # Aggregate by interval
+        if interval not in interval_stats:
+            interval_stats[interval] = {"total": 0, "success": 0, "failed": 0}
+        interval_stats[interval]["total"] += total
+        interval_stats[interval]["success"] += success
+        interval_stats[interval]["failed"] += failed
+
+        # Aggregate by market
+        if market not in market_stats:
+            market_stats[market] = {"total": 0, "success": 0, "failed": 0}
+        market_stats[market]["total"] += total
+        market_stats[market]["success"] += success
+        market_stats[market]["failed"] += failed
+
+    # Send the report
+    success = await telegram_notifier.send_daily_performance_report(
+        date=datetime.now(),
+        total_predictions=total_predictions,
+        successful_predictions=successful_predictions,
+        failed_predictions=failed_predictions,
+        interval_stats=interval_stats,
+        market_stats=market_stats,
+    )
+
+    return {
+        "status": "success" if success else "failed",
+        "total_predictions": total_predictions,
+        "successful_predictions": successful_predictions,
+        "failed_predictions": failed_predictions,
+        "interval_stats": interval_stats,
+        "market_stats": market_stats,
+    }
+
+
+@router.get("/trading-status")
+async def get_trading_status() -> Dict[str, Any]:
+    """
+    Get current trading status - whether market is open and notifications will be sent.
+    """
+    from datetime import timezone, timedelta
+    try:
+        import pytz
+        IST = pytz.timezone('Asia/Kolkata')
+        now_ist = datetime.now(timezone.utc).astimezone(IST)
+    except ImportError:
+        ist_offset = timedelta(hours=5, minutes=30)
+        now_ist = datetime.now(timezone.utc) + ist_offset
+
+    weekday = now_ist.weekday()
+    is_weekend = weekday >= 5
+
+    hour = now_ist.hour
+    minute = now_ist.minute
+    current_time = hour * 60 + minute
+    market_open = 9 * 60  # 9:00 AM
+    market_close = 23 * 60 + 30  # 11:30 PM
+
+    is_trading_hours = market_open <= current_time <= market_close and not is_weekend
+
+    status_reason = None
+    if is_weekend:
+        day_name = now_ist.strftime("%A")
+        status_reason = f"Weekend ({day_name}) - Market Closed"
+    elif current_time < market_open:
+        status_reason = f"Pre-market hours (opens at 9:00 AM IST)"
+    elif current_time > market_close:
+        status_reason = f"Post-market hours (closed at 11:30 PM IST)"
+    else:
+        status_reason = "Market is open - Trading hours"
+
+    return {
+        "current_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+        "is_weekend": is_weekend,
+        "is_trading_hours": is_trading_hours,
+        "notifications_active": is_trading_hours,
+        "status_reason": status_reason,
+        "market_hours": {
+            "open": "9:00 AM IST",
+            "close": "11:30 PM IST",
+            "days": "Monday - Friday",
+        },
+    }

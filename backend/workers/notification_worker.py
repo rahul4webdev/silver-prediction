@@ -6,7 +6,11 @@ Handles:
 - Daily Upstox token re-authentication reminder (8:45 AM IST)
 - Tick collector health checks
 - Platform health status
-- Prediction notifications after generation
+- Prediction notifications after generation (only during trading hours)
+- Daily performance report at 11:30 PM IST
+
+Trading Hours: 9:00 AM - 11:30 PM IST, Monday-Friday
+Notifications are skipped on weekends and can be skipped on holidays.
 
 Usage:
     python -m workers.notification_worker
@@ -18,9 +22,9 @@ import asyncio
 import logging
 import signal
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,6 +45,37 @@ try:
 except ImportError:
     IST = None
 
+# MCX Trading Hours (IST)
+MARKET_OPEN_HOUR = 9
+MARKET_OPEN_MINUTE = 0
+MARKET_CLOSE_HOUR = 23
+MARKET_CLOSE_MINUTE = 30
+
+# Known Indian market holidays (can be extended)
+# Format: (month, day)
+INDIAN_MARKET_HOLIDAYS_2025 = {
+    (1, 26),   # Republic Day
+    (2, 26),   # Maha Shivaratri
+    (3, 14),   # Holi
+    (3, 31),   # Id-ul-Fitr (tentative)
+    (4, 10),   # Mahavir Jayanti
+    (4, 14),   # Dr. Ambedkar Jayanti
+    (4, 18),   # Good Friday
+    (5, 1),    # May Day
+    (6, 7),    # Id-ul-Adha (tentative)
+    (7, 6),    # Muharram (tentative)
+    (8, 15),   # Independence Day
+    (8, 16),   # Parsi New Year
+    (9, 5),    # Milad-un-Nabi (tentative)
+    (10, 2),   # Gandhi Jayanti
+    (10, 21),  # Dussehra
+    (10, 22),  # Dussehra
+    (11, 5),   # Diwali (Laxmi Puja)
+    (11, 6),   # Diwali Balipratipada
+    (11, 7),   # Diwali (Bhai Dooj)
+    (12, 25),  # Christmas
+}
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +90,9 @@ logger = logging.getLogger(__name__)
 class NotificationWorker:
     """
     Worker that sends scheduled Telegram notifications.
+
+    Notifications are sent only during trading hours (9:00 AM - 11:30 PM IST)
+    on weekdays. Weekends and holidays are skipped.
     """
 
     def __init__(self):
@@ -62,6 +100,8 @@ class NotificationWorker:
         self._running = False
         self._last_tick_check: Optional[datetime] = None
         self._last_tick_count: int = 0
+        # Custom holidays can be added here (format: date objects)
+        self._custom_holidays: Set[date] = set()
 
     def _get_ist_now(self) -> datetime:
         """Get current IST time."""
@@ -72,8 +112,90 @@ class NotificationWorker:
             ist_offset = timedelta(hours=5, minutes=30)
             return now_utc + ist_offset
 
+    def _is_weekend(self) -> bool:
+        """Check if today is a weekend (Saturday=5, Sunday=6)."""
+        now_ist = self._get_ist_now()
+        return now_ist.weekday() >= 5
+
+    def _is_holiday(self) -> bool:
+        """Check if today is a known market holiday."""
+        now_ist = self._get_ist_now()
+        today = now_ist.date()
+
+        # Check custom holidays first
+        if today in self._custom_holidays:
+            return True
+
+        # Check known Indian market holidays
+        month_day = (today.month, today.day)
+        if month_day in INDIAN_MARKET_HOLIDAYS_2025:
+            return True
+
+        return False
+
+    def _is_trading_hours(self) -> bool:
+        """
+        Check if current time is within MCX trading hours (9:00 AM - 11:30 PM IST).
+        Returns False on weekends and holidays.
+        """
+        # Skip weekends
+        if self._is_weekend():
+            return False
+
+        # Skip holidays
+        if self._is_holiday():
+            return False
+
+        now_ist = self._get_ist_now()
+        hour = now_ist.hour
+        minute = now_ist.minute
+        current_time = hour * 60 + minute
+
+        market_open = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MINUTE  # 9:00 = 540
+        market_close = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MINUTE  # 23:30 = 1410
+
+        return market_open <= current_time <= market_close
+
+    def _get_market_closed_reason(self) -> Optional[str]:
+        """Get reason why market is closed."""
+        if self._is_weekend():
+            now_ist = self._get_ist_now()
+            day_name = now_ist.strftime("%A")
+            return f"Weekend ({day_name}) - Market Closed"
+
+        if self._is_holiday():
+            return "Public Holiday - Market Closed"
+
+        now_ist = self._get_ist_now()
+        hour = now_ist.hour
+        minute = now_ist.minute
+
+        if hour < MARKET_OPEN_HOUR or (hour == MARKET_OPEN_HOUR and minute < MARKET_OPEN_MINUTE):
+            return f"Pre-market hours (Market opens at {MARKET_OPEN_HOUR}:{MARKET_OPEN_MINUTE:02d} AM IST)"
+
+        if hour > MARKET_CLOSE_HOUR or (hour == MARKET_CLOSE_HOUR and minute > MARKET_CLOSE_MINUTE):
+            return f"Post-market hours (Market closed at {MARKET_CLOSE_HOUR}:{MARKET_CLOSE_MINUTE:02d} PM IST)"
+
+        return None
+
+    def add_holiday(self, holiday_date: date):
+        """Add a custom holiday date."""
+        self._custom_holidays.add(holiday_date)
+        logger.info(f"Added custom holiday: {holiday_date}")
+
+    def remove_holiday(self, holiday_date: date):
+        """Remove a custom holiday date."""
+        self._custom_holidays.discard(holiday_date)
+        logger.info(f"Removed custom holiday: {holiday_date}")
+
     async def send_auth_reminder(self):
         """Send daily authentication reminder at 8:45 AM IST."""
+        # Skip on weekends and holidays
+        if self._is_weekend() or self._is_holiday():
+            reason = "Weekend" if self._is_weekend() else "Holiday"
+            logger.info(f"Skipping auth reminder - {reason}, market is closed")
+            return
+
         logger.info("Sending Upstox auth reminder...")
         try:
             await telegram_notifier.send_auth_reminder()
@@ -82,6 +204,11 @@ class NotificationWorker:
 
     async def check_tick_collector(self):
         """Check tick collector health and send notification if issues."""
+        # Skip check on weekends and holidays
+        if self._is_weekend() or self._is_holiday():
+            logger.info("Skipping tick collector check - market is closed")
+            return
+
         logger.info("Checking tick collector health...")
         try:
             from app.services.tick_collector import tick_collector
@@ -103,19 +230,31 @@ class NotificationWorker:
             # Get subscribed contracts count
             contracts = len(tick_collector.subscribed_instruments) if hasattr(tick_collector, 'subscribed_instruments') else 0
 
-            # Determine if there's an issue
+            # Determine if there's an issue and get reason
             error_msg = None
-            is_market_hours = self._is_market_hours()
+            reason = None
+            is_market_hours = self._is_trading_hours()
 
-            if is_market_hours:
+            if not is_market_hours:
+                # Market is closed - get the reason
+                reason = self._get_market_closed_reason()
+                if not is_running:
+                    # This is expected when market is closed, no notification needed
+                    logger.info(f"Tick collector not running - {reason}")
+                    return
+            else:
+                # During market hours - check for issues
                 if not is_running:
                     error_msg = "Tick collector not running during market hours"
+                    reason = "Service may have stopped or crashed. Check systemd logs."
                 elif last_tick and (datetime.now() - last_tick).total_seconds() > 300:
-                    error_msg = f"No ticks received in last 5 minutes"
+                    error_msg = "No ticks received in last 5 minutes"
+                    reason = "WebSocket connection may be lost or Upstox auth expired."
                 elif contracts == 0:
                     error_msg = "No contracts subscribed"
+                    reason = "Failed to subscribe to MCX Silver contracts."
 
-            # Only send notification if there's an issue or it's a scheduled health check
+            # Only send notification if there's an issue during market hours
             if error_msg:
                 await telegram_notifier.send_tick_collector_status(
                     is_running=is_running,
@@ -123,33 +262,20 @@ class NotificationWorker:
                     last_tick_time=last_tick,
                     ticks_per_minute=ticks_per_min,
                     error_message=error_msg,
+                    reason=reason,
                 )
 
         except Exception as e:
             logger.error(f"Failed to check tick collector: {e}")
 
-    def _is_market_hours(self) -> bool:
-        """Check if current time is within MCX trading hours."""
-        now_ist = self._get_ist_now()
-        weekday = now_ist.weekday()
-
-        # MCX closed on weekends
-        if weekday >= 5:
-            return False
-
-        hour = now_ist.hour
-        minute = now_ist.minute
-
-        # MCX: 9:00 AM - 11:55 PM IST
-        if hour >= 9 and hour < 23:
-            return True
-        if hour == 23 and minute <= 55:
-            return True
-
-        return False
 
     async def send_platform_health(self):
         """Send comprehensive platform health status."""
+        # Skip on weekends and holidays
+        if self._is_weekend() or self._is_holiday():
+            logger.info("Skipping platform health notification - market is closed")
+            return
+
         logger.info("Sending platform health status...")
         try:
             # Check API health
@@ -220,6 +346,17 @@ class NotificationWorker:
 
     async def send_predictions_notification(self, interval: str):
         """Generate and send predictions for a specific interval."""
+        # Skip on weekends and holidays
+        if self._is_weekend() or self._is_holiday():
+            logger.info(f"Skipping {interval} predictions - market is closed (weekend/holiday)")
+            return
+
+        # Skip outside trading hours (9:00 AM - 11:30 PM IST)
+        if not self._is_trading_hours():
+            reason = self._get_market_closed_reason()
+            logger.info(f"Skipping {interval} predictions - {reason}")
+            return
+
         logger.info(f"Generating and sending {interval} predictions...")
         try:
             from app.services.prediction_engine import prediction_engine
@@ -282,6 +419,89 @@ class NotificationWorker:
     async def send_daily_predictions(self):
         """Send daily predictions."""
         await self.send_predictions_notification("1d")
+
+    async def send_daily_performance_report(self):
+        """
+        Send daily performance report at 11:30 PM IST.
+        Shows accuracy stats for all predictions made today.
+        """
+        # Skip on weekends and holidays (no trading, no predictions)
+        if self._is_weekend() or self._is_holiday():
+            logger.info("Skipping daily performance report - market was closed today")
+            return
+
+        logger.info("Generating daily performance report...")
+        try:
+            from sqlalchemy import text
+
+            now_ist = self._get_ist_now()
+            today = now_ist.date()
+
+            async with get_db_session() as db:
+                # Get all verified predictions for today
+                result = await db.execute(text("""
+                    SELECT
+                        interval,
+                        market,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN is_direction_correct = true THEN 1 ELSE 0 END) as successful,
+                        SUM(CASE WHEN is_direction_correct = false THEN 1 ELSE 0 END) as failed
+                    FROM predictions
+                    WHERE DATE(prediction_time AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = :today
+                    AND verified_at IS NOT NULL
+                    GROUP BY interval, market
+                """), {"today": today})
+
+                rows = result.fetchall()
+
+                if not rows:
+                    logger.info("No verified predictions found for today")
+                    return
+
+                # Aggregate stats
+                total_predictions = 0
+                successful_predictions = 0
+                failed_predictions = 0
+                interval_stats = {}
+                market_stats = {}
+
+                for row in rows:
+                    interval = row[0]
+                    market = row[1]
+                    total = row[2]
+                    success = row[3] or 0
+                    failed = row[4] or 0
+
+                    total_predictions += total
+                    successful_predictions += success
+                    failed_predictions += failed
+
+                    # Aggregate by interval
+                    if interval not in interval_stats:
+                        interval_stats[interval] = {"total": 0, "success": 0, "failed": 0}
+                    interval_stats[interval]["total"] += total
+                    interval_stats[interval]["success"] += success
+                    interval_stats[interval]["failed"] += failed
+
+                    # Aggregate by market
+                    if market not in market_stats:
+                        market_stats[market] = {"total": 0, "success": 0, "failed": 0}
+                    market_stats[market]["total"] += total
+                    market_stats[market]["success"] += success
+                    market_stats[market]["failed"] += failed
+
+                # Send the report
+                await telegram_notifier.send_daily_performance_report(
+                    date=now_ist,
+                    total_predictions=total_predictions,
+                    successful_predictions=successful_predictions,
+                    failed_predictions=failed_predictions,
+                    interval_stats=interval_stats,
+                    market_stats=market_stats,
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to send daily performance report: {e}")
 
     def start(self):
         """Start the notification scheduler."""
@@ -354,6 +574,15 @@ class NotificationWorker:
             replace_existing=True,
         )
 
+        # 8. Daily performance report at 11:30 PM IST (18:00 UTC)
+        self.scheduler.add_job(
+            self.send_daily_performance_report,
+            CronTrigger(hour=18, minute=0),  # 11:30 PM IST = 18:00 UTC
+            id="daily_performance_report",
+            name="Daily Performance Report",
+            replace_existing=True,
+        )
+
         # Send startup notification
         self.scheduler.add_job(
             self._send_startup_notification,
@@ -370,14 +599,20 @@ class NotificationWorker:
         message = f"""
 🚀 <b>Notification Worker Started</b>
 
-Scheduled notifications:
+<b>Scheduled Notifications:</b>
 • Auth reminder: 8:45 AM IST daily
-• Tick collector: Every 5 minutes
+• Tick collector: Every 5 min (trading hours)
 • Platform health: Every 6 hours
-• 30m predictions: Every 30 minutes
-• 1h predictions: Every hour
-• 4h predictions: Every 4 hours
+• 30m predictions: Every 30 min (trading hours)
+• 1h predictions: Every hour (trading hours)
+• 4h predictions: Every 4 hours (trading hours)
 • Daily predictions: 9:00 AM IST
+• Daily report: 11:30 PM IST
+
+<b>Trading Hours:</b> 9:00 AM - 11:30 PM IST
+<b>Market Days:</b> Monday - Friday
+
+ℹ️ Notifications skipped on weekends & holidays
 
 ⏰ {self._get_ist_now().strftime('%Y-%m-%d %H:%M:%S IST')}
 """

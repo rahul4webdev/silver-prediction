@@ -121,15 +121,29 @@ https://predictionapi.gahfaudio.in/api/v1/auth/login
         last_tick_time: Optional[datetime] = None,
         ticks_per_minute: float = 0,
         error_message: Optional[str] = None,
+        reason: Optional[str] = None,
     ) -> bool:
         """
         Send tick collector health status notification.
+
+        Args:
+            is_running: Whether tick collector is running
+            contracts_subscribed: Number of contracts subscribed
+            last_tick_time: Time of last tick received
+            ticks_per_minute: Rate of ticks per minute
+            error_message: Error message if any
+            reason: Reason why tick collector is not running (e.g., "Weekend - Market Closed")
         """
         status_emoji = "✅" if is_running and not error_message else "❌"
-        status_text = "Running" if is_running else "Stopped"
 
-        if error_message:
-            status_text = f"Error: {error_message}"
+        # Build status text with reason
+        if is_running and not error_message:
+            status_text = "Running"
+        elif error_message:
+            status_text = f"Error"
+            reason = error_message
+        else:
+            status_text = "Stopped"
 
         last_tick_str = "N/A"
         if last_tick_time:
@@ -138,7 +152,13 @@ https://predictionapi.gahfaudio.in/api/v1/auth/login
         message = f"""
 📡 <b>Tick Collector Status</b>
 
-{status_emoji} Status: <b>{status_text}</b>
+{status_emoji} Status: <b>{status_text}</b>"""
+
+        # Add reason if not running
+        if reason:
+            message += f"\n📝 Reason: <b>{reason}</b>"
+
+        message += f"""
 📊 Contracts Subscribed: <b>{contracts_subscribed}</b>
 🕐 Last Tick: <b>{last_tick_str}</b>
 📈 Ticks/min: <b>{ticks_per_minute:.1f}</b>
@@ -226,13 +246,20 @@ https://predictionapi.gahfaudio.in/api/v1/auth/login
                 current_str = f"${current:.2f}"
                 predicted_str = f"${predicted:.2f}"
 
-            # Contract info
+            # Contract info - handle COMEX properly
             contract = p.get("contract_type", "")
             trading_symbol = p.get("trading_symbol", "")
 
-            # Extract expiry from trading symbol
+            # For COMEX, use a proper label if contract_type is None or empty
+            if market == "comex":
+                if not contract or contract == "None":
+                    contract = "Silver Futures (SI=F)"
+            elif not contract:
+                contract = "SILVER"
+
+            # Extract expiry from trading symbol for MCX
             expiry = ""
-            if trading_symbol:
+            if trading_symbol and market == "mcx":
                 parts = trading_symbol.split()
                 if len(parts) >= 5:
                     expiry = f" ({parts[2]} {parts[3]} {parts[4]})"
@@ -337,6 +364,67 @@ Result: <b>{result_text}</b>
 
 ⏰ {datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")}
 """
+        return await self.send_message(message.strip())
+
+    async def send_daily_performance_report(
+        self,
+        date: datetime,
+        total_predictions: int,
+        successful_predictions: int,
+        failed_predictions: int,
+        interval_stats: Dict[str, Dict[str, int]],
+        market_stats: Dict[str, Dict[str, int]] = None,
+    ) -> bool:
+        """
+        Send daily performance report at end of trading day.
+
+        Args:
+            date: Report date
+            total_predictions: Total predictions made
+            successful_predictions: Predictions where direction was correct
+            failed_predictions: Predictions where direction was wrong
+            interval_stats: Stats per interval {"30m": {"total": X, "success": Y, "failed": Z}}
+            market_stats: Stats per market {"mcx": {...}, "comex": {...}}
+        """
+        success_rate = (successful_predictions / total_predictions * 100) if total_predictions > 0 else 0
+
+        date_str = date.strftime("%d %b %Y")
+
+        message = f"""
+📊 <b>Daily Performance Report</b>
+━━━━━━━━━━━━━━━━━━━━━━
+📅 {date_str}
+
+<b>Overall Performance:</b>
+📈 Total Predictions: <b>{total_predictions}</b>
+✅ Successful: <b>{successful_predictions}</b>
+❌ Failed: <b>{failed_predictions}</b>
+🎯 Success Rate: <b>{success_rate:.1f}%</b>
+"""
+
+        if interval_stats:
+            message += "\n<b>By Interval:</b>\n"
+            interval_labels = {"30m": "30 Min", "1h": "1 Hour", "4h": "4 Hour", "1d": "Daily"}
+            for interval, stats in interval_stats.items():
+                label = interval_labels.get(interval, interval)
+                total = stats.get("total", 0)
+                success = stats.get("success", 0)
+                rate = (success / total * 100) if total > 0 else 0
+                emoji = "🟢" if rate >= 55 else "🟡" if rate >= 50 else "🔴"
+                message += f"  {emoji} {label}: {success}/{total} ({rate:.0f}%)\n"
+
+        if market_stats:
+            message += "\n<b>By Market:</b>\n"
+            for market, stats in market_stats.items():
+                total = stats.get("total", 0)
+                success = stats.get("success", 0)
+                rate = (success / total * 100) if total > 0 else 0
+                emoji = "🟢" if rate >= 55 else "🟡" if rate >= 50 else "🔴"
+                market_label = "MCX 🇮🇳" if market == "mcx" else "COMEX 🇺🇸"
+                message += f"  {emoji} {market_label}: {success}/{total} ({rate:.0f}%)\n"
+
+        message += f"\n⏰ Report generated at {datetime.now().strftime('%H:%M IST')}"
+
         return await self.send_message(message.strip())
 
 
