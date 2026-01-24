@@ -1,0 +1,25 @@
+[Unit]
+Description=Silver Prediction Notification Worker
+After=network.target postgresql.service redis.service silver-prediction-api.service
+Wants=silver-prediction-api.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/predictionapi.gahfaudio.in/public_html/backend
+EnvironmentFile=/home/predictionapi.gahfaudio.in/public_html/.env
+ExecStart=/home/predictionapi.gahfaudio.in/public_html/venv/bin/python -m workers.notification_worker
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/home/predictionapi.gahfaudio.in/logs/notifier.log
+StandardError=append:/home/predictionapi.gahfaudio.in/logs/notifier-error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

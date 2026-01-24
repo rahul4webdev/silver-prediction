@@ -101,12 +101,14 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           REDIS_HOST: ${{ secrets.REDIS_HOST }}
           REDIS_PORT: ${{ secrets.REDIS_PORT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_SSH_PORT }}
-          envs: SECRET_KEY,UPSTOX_API_KEY,UPSTOX_API_SECRET,POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,REDIS_HOST,REDIS_PORT
+          envs: SECRET_KEY,UPSTOX_API_KEY,UPSTOX_API_SECRET,POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,REDIS_HOST,REDIS_PORT,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
           script: |
             set -e
 
@@ -201,6 +203,8 @@ jobs:
             FRONTEND_URL=https://prediction.gahfaudio.in
             DASHBOARD_DOMAIN=prediction.gahfaudio.in
             MODEL_WEIGHTS_PATH=/home/predictionapi.gahfaudio.in/data/models
+            TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+            TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
             ENVEOF
 
             # Remove leading whitespace from .env
@@ -215,6 +219,8 @@ jobs:
             cp deploy/systemd/silver-prediction-api.service /etc/systemd/system/
             cp deploy/systemd/silver-prediction-worker.service /etc/systemd/system/ 2>/dev/null || true
             cp deploy/systemd/silver-prediction-scheduler.service /etc/systemd/system/ 2>/dev/null || true
+            cp deploy/systemd/silver-prediction-notifier.service /etc/systemd/system/ 2>/dev/null || true
+            cp deploy/systemd/silver-prediction-tick-collector.service /etc/systemd/system/ 2>/dev/null || true
 
             # Reload systemd and restart services
             echo "Restarting services..."
@@ -224,11 +230,16 @@ jobs:
             systemctl enable silver-prediction-api
             systemctl restart silver-prediction-api || systemctl start silver-prediction-api
 
-            # Enable and start worker/scheduler (optional, may not be needed initially)
-            # systemctl enable silver-prediction-worker
-            # systemctl restart silver-prediction-worker || true
-            # systemctl enable silver-prediction-scheduler
-            # systemctl restart silver-prediction-scheduler || true
+            # Enable and start notification service (if Telegram is configured)
+            if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+              echo "Enabling notification service..."
+              systemctl enable silver-prediction-notifier 2>/dev/null || true
+              systemctl restart silver-prediction-notifier 2>/dev/null || true
+            fi
+
+            # Enable and start tick collector service
+            systemctl enable silver-prediction-tick-collector 2>/dev/null || true
+            systemctl restart silver-prediction-tick-collector 2>/dev/null || true
 
             sleep 5
             echo "=== Service Status ==="
