@@ -322,11 +322,17 @@ async def get_training_status() -> Dict[str, Any]:
     """
     Get the status of background training.
     """
-    return {
-        "is_running": _training_status["is_running"],
-        "started_at": _training_status["started_at"],
-        "completed_at": _training_status["completed_at"],
-        "current_task": _training_status["current_task"],
-        "progress": _training_status["progress"][-10:],  # Last 10 entries
-        "results": _training_status["results"],
-    }
+    try:
+        return {
+            "is_running": _training_status.get("is_running", False),
+            "started_at": _training_status.get("started_at"),
+            "completed_at": _training_status.get("completed_at"),
+            "current_task": _training_status.get("current_task"),
+            "progress": _training_status.get("progress", [])[-10:],  # Last 10 entries
+            "results": _training_status.get("results", []),
+        }
+    except Exception as e:
+        return {
+            "is_running": False,
+            "error": str(e),
+        }
