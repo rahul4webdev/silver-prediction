@@ -17,6 +17,7 @@ from app.models.predictions import Prediction
 from app.models.price_data import PriceData
 from app.ml.models.ensemble import EnsemblePredictor
 from app.ml.features.technical import add_technical_features
+from app.services.upstox_client import upstox_client
 
 # Optional sentiment imports
 try:
@@ -144,6 +145,9 @@ class PredictionEngine:
         interval: str = "30m",
         horizon: int = 1,
         include_sentiment: bool = True,
+        instrument_key: Optional[str] = None,
+        contract_type: Optional[str] = None,
+        trading_symbol: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate a prediction and store it.
@@ -155,11 +159,28 @@ class PredictionEngine:
             interval: Prediction interval
             horizon: Periods ahead
             include_sentiment: Whether to fetch and include sentiment features
+            instrument_key: Specific contract instrument key (for MCX)
+            contract_type: Contract type (SILVER, SILVERM, SILVERMIC)
+            trading_symbol: Human-readable trading symbol
 
         Returns:
             Prediction result dict
         """
         logger.info(f"Generating {interval} prediction for {asset}/{market}")
+
+        # For MCX market, fetch contract info if not provided
+        if market == "mcx" and asset == "silver" and not contract_type:
+            try:
+                silver_contracts = await upstox_client.get_all_silver_instrument_keys()
+                if silver_contracts:
+                    # Use the first (default) contract - typically SILVER with nearest expiry
+                    default_contract = silver_contracts[0]
+                    instrument_key = default_contract.get("instrument_key")
+                    contract_type = default_contract.get("contract_type")
+                    trading_symbol = default_contract.get("trading_symbol")
+                    logger.info(f"Using default contract: {contract_type} ({trading_symbol})")
+            except Exception as e:
+                logger.warning(f"Failed to fetch contract info: {e}")
 
         # Get recent data
         df = await self.get_recent_data(db, asset, market, interval)
@@ -244,6 +265,11 @@ class PredictionEngine:
             asset=asset,
             market=market,
             interval=interval,
+            # Contract info (MCX silver has multiple contracts)
+            instrument_key=instrument_key,
+            contract_type=contract_type,
+            trading_symbol=trading_symbol,
+            # Prediction details
             prediction_time=prediction_time,
             target_time=target_time,
             current_price=Decimal(str(current_price)),
