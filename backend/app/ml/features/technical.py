@@ -238,6 +238,7 @@ class TechnicalIndicators:
         df: pd.DataFrame,
         include_volume: bool = True,
         include_momentum: bool = True,
+        max_lookback: int = None,
     ) -> pd.DataFrame:
         """
         Calculate all technical indicators.
@@ -246,11 +247,13 @@ class TechnicalIndicators:
             df: DataFrame with OHLCV data
             include_volume: Include volume-based indicators
             include_momentum: Include momentum indicators
+            max_lookback: Maximum lookback period to use (auto-detected if None)
 
         Returns:
             DataFrame with all indicator columns
         """
         df = df.copy()
+        data_len = len(df)
 
         # Ensure required columns exist
         required_cols = ["open", "high", "low", "close"]
@@ -258,8 +261,21 @@ class TechnicalIndicators:
             if col not in df.columns:
                 raise ValueError(f"Missing required column: {col}")
 
-        # Trend indicators
-        df = cls.sma(df, periods=[20, 50, 200])
+        # Auto-detect max lookback based on data length
+        # We need to keep at least 50% of data after dropna
+        if max_lookback is None:
+            max_lookback = min(200, data_len // 2)
+
+        # Adapt SMA periods based on data length
+        if max_lookback >= 200:
+            sma_periods = [20, 50, 200]
+        elif max_lookback >= 50:
+            sma_periods = [10, 20, 50]
+        else:
+            sma_periods = [5, 10, 20]
+
+        # Trend indicators with adaptive periods
+        df = cls.sma(df, periods=sma_periods)
         df = cls.ema(df, periods=[12, 26])
 
         # Momentum indicators
