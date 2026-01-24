@@ -2,17 +2,21 @@
 Prediction API endpoints.
 """
 
+import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import Asset, Market, PredictionInterval
-from app.models.database import get_db
+from app.models.database import get_db, get_db_session
 from app.models.predictions import Prediction
 from app.services.prediction_engine import prediction_engine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/predictions")
 
@@ -216,3 +220,113 @@ async def get_model_info(
         return ensemble.get_info()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Training status tracker
+_training_status: Dict[str, Any] = {
+    "is_running": False,
+    "started_at": None,
+    "completed_at": None,
+    "current_task": None,
+    "progress": [],
+    "results": [],
+}
+
+
+async def _train_all_background(asset: str = "silver"):
+    """Background task to train all market/interval combinations."""
+    global _training_status
+
+    markets = ["mcx", "comex"]
+    intervals = ["30m", "1h", "4h", "1d"]
+
+    _training_status["is_running"] = True
+    _training_status["started_at"] = datetime.now().isoformat()
+    _training_status["completed_at"] = None
+    _training_status["progress"] = []
+    _training_status["results"] = []
+
+    for market in markets:
+        for interval in intervals:
+            task_name = f"{asset}/{market}/{interval}"
+            _training_status["current_task"] = task_name
+            _training_status["progress"].append(f"Training {task_name}...")
+
+            try:
+                async with get_db_session() as db:
+                    result = await prediction_engine.train_models(db, asset, market, interval)
+                    _training_status["results"].append({
+                        "task": task_name,
+                        "status": "success",
+                        "samples": result.get("training_samples", 0),
+                    })
+                    _training_status["progress"].append(f"Completed {task_name}: {result.get('training_samples', 0)} samples")
+                    logger.info(f"Trained {task_name}: {result.get('training_samples', 0)} samples")
+            except ValueError as e:
+                _training_status["results"].append({
+                    "task": task_name,
+                    "status": "skipped",
+                    "reason": str(e),
+                })
+                _training_status["progress"].append(f"Skipped {task_name}: {e}")
+                logger.warning(f"Skipped {task_name}: {e}")
+            except Exception as e:
+                _training_status["results"].append({
+                    "task": task_name,
+                    "status": "error",
+                    "error": str(e),
+                })
+                _training_status["progress"].append(f"Error {task_name}: {e}")
+                logger.error(f"Error training {task_name}: {e}")
+
+    _training_status["is_running"] = False
+    _training_status["completed_at"] = datetime.now().isoformat()
+    _training_status["current_task"] = None
+    logger.info("All training complete")
+
+
+@router.post("/train-all")
+async def train_all_models(
+    background_tasks: BackgroundTasks,
+    asset: str = Query("silver"),
+) -> Dict[str, Any]:
+    """
+    Train all ML models for all markets and intervals.
+
+    This runs as a background task to avoid timeout.
+    Use GET /predictions/train-status to check progress.
+    """
+    global _training_status
+
+    if _training_status["is_running"]:
+        return {
+            "status": "already_running",
+            "message": "Training is already in progress",
+            "started_at": _training_status["started_at"],
+            "current_task": _training_status["current_task"],
+        }
+
+    background_tasks.add_task(_train_all_background, asset)
+
+    return {
+        "status": "started",
+        "message": "Training started in background. Use GET /predictions/train-status to check progress.",
+        "asset": asset,
+        "markets": ["mcx", "comex"],
+        "intervals": ["30m", "1h", "4h", "1d"],
+    }
+
+
+@router.get("/train-status")
+async def get_training_status() -> Dict[str, Any]:
+    """
+    Get the status of background training.
+    """
+    return {
+        "is_running": _training_status["is_running"],
+        "started_at": _training_status["started_at"],
+        "completed_at": _training_status["completed_at"],
+        "current_task": _training_status["current_task"],
+        "progress": _training_status["progress"][-10:],  # Last 10 entries
+        "results": _training_status["results"],
+    }
