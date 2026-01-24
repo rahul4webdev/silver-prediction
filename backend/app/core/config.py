@@ -8,6 +8,8 @@ The parent .env file is at /project-root/.env (one level above backend/).
 IMPORTANT: UPSTOX_ACCESS_TOKEN should NOT be in GitHub secrets.
 It's obtained via OAuth and saved to .env by the /auth/callback endpoint.
 Tokens expire daily at midnight IST and need to be refreshed via OAuth.
+
+Version: 1.0.1 - Added flexible training thresholds
 """
 
 from functools import lru_cache
