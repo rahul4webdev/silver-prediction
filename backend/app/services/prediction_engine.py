@@ -615,8 +615,17 @@ class PredictionEngine:
         # Get all historical data
         df = await self.get_recent_data(db, asset, market, interval, limit=10000)
 
-        if df.empty or len(df) < 500:
-            raise ValueError(f"Insufficient data for training: {len(df)} rows")
+        # Minimum samples vary by interval (daily needs less, intraday needs more)
+        min_samples = {
+            "30m": 500,
+            "1h": 400,
+            "4h": 200,
+            "1d": 100,  # Only ~250 trading days per year
+        }
+        required = min_samples.get(interval, 500)
+
+        if df.empty or len(df) < required:
+            raise ValueError(f"Insufficient data for training: {len(df)} rows, need at least {required}")
 
         # Drop columns with all NaN values (like open_interest, vwap)
         df = df.dropna(axis=1, how='all')
