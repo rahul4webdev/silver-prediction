@@ -119,9 +119,10 @@ async def get_system_status(
     # ==================== Tick Collector Status ====================
     try:
         from app.services.tick_collector import tick_collector
-        last_tick = tick_collector.last_tick_time
-        tick_count = tick_collector.tick_count if hasattr(tick_collector, 'tick_count') else 0
-        subscribed = len(tick_collector.subscribed_instruments) if hasattr(tick_collector, 'subscribed_instruments') else 0
+        stats = tick_collector.stats
+        last_tick = stats.get("last_tick_time")
+        tick_count = stats.get("ticks_received", 0)
+        subscribed = stats.get("contracts_subscribed", 0)
 
         status["services"]["tick_collector"] = {
             "status": "running" if tick_collector.is_running else "stopped",
@@ -166,12 +167,15 @@ async def get_system_status(
                     "models": {},
                 }
 
-                # Check individual models
-                for name, model in ensemble.models.items():
-                    models_status[interval]["models"][name] = {
-                        "is_trained": model.is_trained,
-                        "weight": ensemble.weights.get(name, 0),
-                    }
+                # Check individual models - ensemble has named attributes, not a dict
+                model_names = ["prophet", "lstm", "xgboost", "gru", "random_forest"]
+                for name in model_names:
+                    model = getattr(ensemble, name, None)
+                    if model is not None:
+                        models_status[interval]["models"][name] = {
+                            "is_trained": model.is_trained if hasattr(model, 'is_trained') else False,
+                            "weight": ensemble.weights.get(name, 0),
+                        }
             except Exception as e:
                 models_status[interval] = {
                     "is_trained": False,
@@ -297,11 +301,15 @@ async def get_models_status() -> Dict[str, Any]:
                     "models": {},
                 }
 
-                for name, model in ensemble.models.items():
-                    models_status[interval]["models"][name] = {
-                        "is_trained": model.is_trained,
-                        "weight": ensemble.weights.get(name, 0),
-                    }
+                # Check individual models - ensemble has named attributes, not a dict
+                model_names = ["prophet", "lstm", "xgboost", "gru", "random_forest"]
+                for name in model_names:
+                    model = getattr(ensemble, name, None)
+                    if model is not None:
+                        models_status[interval]["models"][name] = {
+                            "is_trained": model.is_trained if hasattr(model, 'is_trained') else False,
+                            "weight": ensemble.weights.get(name, 0),
+                        }
             except Exception as e:
                 models_status[interval] = {"error": str(e)}
 
