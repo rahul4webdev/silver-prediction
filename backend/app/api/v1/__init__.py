@@ -3,7 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     predictions, historical, accuracy, health, auth, ticks,
-    sentiment, macro, alerts, confluence, contracts, notifications
+    sentiment, macro, alerts, confluence, contracts, notifications, status
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -20,3 +20,4 @@ router.include_router(alerts.router, tags=["Alerts & Journal"])
 router.include_router(confluence.router, tags=["Confluence & Correlation"])
 router.include_router(contracts.router, tags=["Contracts"])
 router.include_router(notifications.router, tags=["Notifications"])
+router.include_router(status.router, tags=["System Status"])

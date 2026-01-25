@@ -421,6 +421,79 @@ class NotificationWorker:
         """Send daily predictions."""
         await self.send_predictions_notification("1d")
 
+    async def collect_news_sentiment(self):
+        """
+        Collect news and sentiment data daily.
+        This runs EVERY DAY including weekends to ensure we have data
+        ready for the next trading day.
+        """
+        logger.info("Collecting news sentiment data...")
+        try:
+            from app.services.news_sentiment import news_sentiment_service
+
+            # Collect sentiment for silver and gold
+            for asset in ["silver", "gold"]:
+                try:
+                    sentiment = await news_sentiment_service.get_sentiment(
+                        asset=asset,
+                        lookback_days=3,
+                    )
+                    logger.info(
+                        f"News sentiment for {asset}: {sentiment.sentiment_label} "
+                        f"(score: {sentiment.overall_sentiment:.2f}, "
+                        f"articles: {sentiment.article_count})"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to collect sentiment for {asset}: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to collect news sentiment: {e}")
+
+    async def train_models_hourly(self):
+        """
+        Retrain models every hour with latest data.
+        This ensures models stay updated with recent market conditions.
+        Runs only during trading hours.
+        """
+        # Skip outside trading hours
+        if not self._is_trading_hours():
+            logger.info("Skipping hourly model training - market is closed")
+            return
+
+        logger.info("Starting hourly model training...")
+        try:
+            from app.services.prediction_engine import prediction_engine
+
+            # Train all market/interval combinations
+            markets = ["mcx", "comex"]
+            intervals = ["30m", "1h", "4h", "1d"]
+            trained_count = 0
+            failed_count = 0
+
+            for market in markets:
+                for interval in intervals:
+                    try:
+                        async with get_db_session() as db:
+                            result = await prediction_engine.train_models(
+                                db, "silver", market, interval
+                            )
+                            samples = result.get("training_samples", 0)
+                            if samples > 0:
+                                trained_count += 1
+                                logger.info(f"Trained silver/{market}/{interval}: {samples} samples")
+                            else:
+                                logger.info(f"Skipped silver/{market}/{interval}: insufficient data")
+                    except ValueError as e:
+                        logger.warning(f"Skipped silver/{market}/{interval}: {e}")
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Error training silver/{market}/{interval}: {e}")
+
+            logger.info(f"Hourly training complete: {trained_count} trained, {failed_count} failed")
+
+        except Exception as e:
+            logger.error(f"Failed hourly model training: {e}")
+
     async def send_daily_performance_report(self):
         """
         Send daily performance report at 11:30 PM IST.
@@ -584,6 +657,25 @@ class NotificationWorker:
             replace_existing=True,
         )
 
+        # 9. News sentiment collection - DAILY (even weekends) at 6:00 AM IST (00:30 UTC)
+        # This ensures data is ready for next trading day
+        self.scheduler.add_job(
+            self.collect_news_sentiment,
+            CronTrigger(hour=0, minute=30),  # 6:00 AM IST = 00:30 UTC
+            id="news_collection",
+            name="Daily News Collection",
+            replace_existing=True,
+        )
+
+        # 10. Hourly model training at :15 every hour (trading hours only)
+        self.scheduler.add_job(
+            self.train_models_hourly,
+            CronTrigger(minute=15),  # Every hour at :15
+            id="model_training_hourly",
+            name="Hourly Model Training",
+            replace_existing=True,
+        )
+
         # Send startup notification
         self.scheduler.add_job(
             self._send_startup_notification,
@@ -600,20 +692,23 @@ class NotificationWorker:
         message = f"""
 🚀 <b>Notification Worker Started</b>
 
-<b>Scheduled Notifications:</b>
-• Auth reminder: 8:45 AM IST daily
+<b>Scheduled Tasks:</b>
+• Auth reminder: 8:45 AM IST (trading days)
 • Tick collector: Every 5 min (trading hours)
-• Platform health: Every 6 hours
+• Platform health: Every 6 hours (trading days)
 • 30m predictions: Every 30 min (trading hours)
 • 1h predictions: Every hour (trading hours)
 • 4h predictions: Every 4 hours (trading hours)
 • Daily predictions: 9:00 AM IST
 • Daily report: 11:30 PM IST
+• News collection: 6:00 AM IST (daily, incl. weekends)
+• Model training: Every hour at :15 (trading hours)
 
 <b>Trading Hours:</b> 9:00 AM - 11:30 PM IST
 <b>Market Days:</b> Monday - Friday
 
-ℹ️ Notifications skipped on weekends & holidays
+ℹ️ Most tasks skip weekends & holidays
+📰 News collection runs daily for data continuity
 
 ⏰ {self._get_ist_now().strftime('%Y-%m-%d %H:%M:%S IST')}
 """

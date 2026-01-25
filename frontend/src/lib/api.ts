@@ -468,3 +468,90 @@ export async function getMCXSilverContracts(
     return null;
   }
 }
+
+// ============================================================
+// System Status
+// ============================================================
+
+export interface ServiceStatus {
+  status: string;
+  connected?: boolean;
+  authenticated?: boolean;
+  is_running?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface ModelStatus {
+  is_trained: boolean;
+  models?: Record<string, { is_trained: boolean; weight: number }>;
+  error?: string;
+}
+
+export interface SchedulerJob {
+  id: string;
+  name: string;
+  next_run: string | null;
+}
+
+export interface SystemStatus {
+  timestamp: string;
+  environment: string;
+  overall_health: string;
+  services: Record<string, ServiceStatus>;
+  models: Record<string, ModelStatus>;
+  scheduler: {
+    status: string;
+    is_running: boolean;
+    jobs: SchedulerJob[];
+  };
+  database: {
+    predictions: {
+      total: number;
+      verified: number;
+      pending: number;
+      today: number;
+    };
+  };
+  market: {
+    current_time_ist: string;
+    is_weekend: boolean;
+    is_trading_hours: boolean;
+    market_status: string;
+    hours: {
+      open: string;
+      close: string;
+    };
+  };
+}
+
+export async function getSystemStatus(): Promise<SystemStatus | null> {
+  try {
+    return await fetchAPI<SystemStatus>('/status/');
+  } catch {
+    return null;
+  }
+}
+
+export async function getModelsStatus(): Promise<{ status: string; intervals: Record<string, ModelStatus> } | null> {
+  try {
+    return await fetchAPI<{ status: string; intervals: Record<string, ModelStatus> }>('/status/models');
+  } catch {
+    return null;
+  }
+}
+
+export async function getPredictionsSummary(): Promise<{
+  total_predictions: number;
+  verified_predictions: number;
+  pending_predictions: number;
+  correct_predictions: number;
+  accuracy_percent: number;
+  predictions_today: number;
+} | null> {
+  try {
+    return await fetchAPI('/status/predictions/summary');
+  } catch {
+    return null;
+  }
+}

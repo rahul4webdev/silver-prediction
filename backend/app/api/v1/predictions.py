@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import select, and_, desc
+from sqlalchemy import select, and_, desc, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import Asset, Market, PredictionInterval
@@ -336,3 +336,44 @@ async def get_training_status() -> Dict[str, Any]:
             "is_running": False,
             "error": str(e),
         }
+
+
+@router.delete("/clear-all")
+async def clear_all_predictions(
+    confirm: bool = Query(False, description="Set to true to confirm deletion"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Delete all predictions from the database.
+
+    WARNING: This is a destructive operation. Set confirm=true to proceed.
+    """
+    if not confirm:
+        # Get count first
+        count_result = await db.execute(select(func.count()).select_from(Prediction))
+        count = count_result.scalar() or 0
+        return {
+            "status": "confirmation_required",
+            "message": f"This will delete {count} predictions. Set confirm=true to proceed.",
+            "predictions_count": count,
+        }
+
+    try:
+        # Get count before deletion
+        count_result = await db.execute(select(func.count()).select_from(Prediction))
+        count = count_result.scalar() or 0
+
+        # Delete all predictions
+        await db.execute(delete(Prediction))
+        await db.commit()
+
+        logger.info(f"Deleted {count} predictions")
+
+        return {
+            "status": "success",
+            "message": f"Deleted {count} predictions",
+            "deleted_count": count,
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete predictions: {str(e)}")
