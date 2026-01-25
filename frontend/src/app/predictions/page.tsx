@@ -47,25 +47,18 @@ export default function PredictionsPage() {
         const intervalParam = selectedInterval === 'all' ? undefined : selectedInterval;
         const data = await getPredictions(selectedAsset, selectedMarket, intervalParam, 100);
 
-        // Filter to show only today's predictions
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayPredictions = data.filter(p => {
-          const predTime = new Date(p.prediction_time);
-          predTime.setHours(0, 0, 0, 0);
-          return predTime.getTime() === today.getTime();
-        });
-
-        setPredictions(todayPredictions);
+        // Show all recent predictions (no date filter)
+        // API already limits to last 100 predictions sorted by recency
+        setPredictions(data);
 
         // Calculate stats
-        const verified = todayPredictions.filter(p => p.verification);
+        const verified = data.filter(p => p.verification);
         const successful = verified.filter(p => p.verification?.is_direction_correct);
         const failed = verified.filter(p => !p.verification?.is_direction_correct);
-        const pending = todayPredictions.filter(p => !p.verification);
+        const pending = data.filter(p => !p.verification);
 
         setStats({
-          total: todayPredictions.length,
+          total: data.length,
           successful: successful.length,
           failed: failed.length,
           pending: pending.length,
@@ -113,8 +106,8 @@ export default function PredictionsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="glass-card p-6">
-        <h1 className="text-2xl font-bold text-white mb-2">Today&apos;s Predictions</h1>
-        <p className="text-zinc-400">View today&apos;s predictions with their outcomes and confidence intervals.</p>
+        <h1 className="text-2xl font-bold text-white mb-2">Recent Predictions</h1>
+        <p className="text-zinc-400">View predictions with their outcomes and confidence intervals.</p>
       </div>
 
       {/* Chart Section */}
@@ -211,9 +204,9 @@ export default function PredictionsPage() {
           </div>
         ) : predictions.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-zinc-400">No predictions found for today.</p>
+            <p className="text-zinc-400">No predictions found.</p>
             <p className="text-xs text-zinc-600 mt-2">
-              Try selecting a different interval or market.
+              Predictions are generated during trading hours (9 AM - 11:30 PM IST, Mon-Fri).
             </p>
           </div>
         ) : (
