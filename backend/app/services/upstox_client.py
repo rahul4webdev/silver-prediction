@@ -296,9 +296,6 @@ class UpstoxClient:
         now = datetime.now()
         silver_contracts = []
 
-        # Contract type priority for sorting
-        contract_priority = {"SILVER": 0, "SILVERM": 1, "SILVERMIC": 2}
-
         for key, instrument in self._instruments_cache.items():
             trading_symbol = instrument.get("trading_symbol", "") or instrument.get("tradingsymbol", "")
             trading_symbol_upper = trading_symbol.upper()
@@ -354,20 +351,13 @@ class UpstoxClient:
                 "contract_type": contract_type,
                 "expiry": expiry,
                 "lot_size": instrument.get("lot_size"),
-                "_priority": contract_priority.get(contract_type, 99),
             })
 
-        # Sort by contract type priority, then by expiry (nearest first)
+        # Sort by expiry date (nearest first) - ascending order
+        # This ensures contracts expiring soonest are selected first
         silver_contracts.sort(
-            key=lambda x: (
-                x["_priority"],
-                x["expiry"] or datetime.max
-            )
+            key=lambda x: x["expiry"] or datetime.max
         )
-
-        # Remove sorting helper field
-        for contract in silver_contracts:
-            del contract["_priority"]
 
         logger.info(f"Found {len(silver_contracts)} active silver contracts")
         return silver_contracts

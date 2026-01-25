@@ -74,6 +74,12 @@ class Prediction(Base):
         nullable=True,
         comment="Human-readable trading symbol (e.g., SILVERM FUT 27 FEB 26)",
     )
+    expiry: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="Contract expiry date",
+    )
 
     # ==========================================================================
     # PREDICTION DETAILS
@@ -265,6 +271,7 @@ class Prediction(Base):
             "instrument_key": self.instrument_key,
             "contract_type": self.contract_type,
             "trading_symbol": self.trading_symbol,
+            "expiry": self.expiry.isoformat() if self.expiry else None,
             # Prediction details
             "prediction_time": self.prediction_time.isoformat(),
             "target_time": self.target_time.isoformat(),

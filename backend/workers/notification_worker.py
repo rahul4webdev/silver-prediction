@@ -371,7 +371,7 @@ class NotificationWorker:
                 except Exception:
                     contracts = [{"contract_type": "SILVER", "instrument_key": None, "trading_symbol": None}]
 
-                for contract in contracts[:3]:  # Limit to top 3 contracts
+                for contract in contracts[:3]:  # Limit to top 3 contracts (nearest expiry)
                     try:
                         prediction = await prediction_engine.generate_prediction(
                             db,
@@ -381,6 +381,7 @@ class NotificationWorker:
                             instrument_key=contract.get("instrument_key"),
                             contract_type=contract.get("contract_type"),
                             trading_symbol=contract.get("trading_symbol"),
+                            expiry=contract.get("expiry"),
                         )
                         predictions.append(prediction)
                     except Exception as e:

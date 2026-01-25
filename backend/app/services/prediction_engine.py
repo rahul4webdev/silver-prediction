@@ -148,6 +148,7 @@ class PredictionEngine:
         instrument_key: Optional[str] = None,
         contract_type: Optional[str] = None,
         trading_symbol: Optional[str] = None,
+        expiry: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """
         Generate a prediction and store it.
@@ -162,6 +163,7 @@ class PredictionEngine:
             instrument_key: Specific contract instrument key (for MCX)
             contract_type: Contract type (SILVER, SILVERM, SILVERMIC)
             trading_symbol: Human-readable trading symbol
+            expiry: Contract expiry date
 
         Returns:
             Prediction result dict
@@ -173,11 +175,12 @@ class PredictionEngine:
             try:
                 silver_contracts = await upstox_client.get_all_silver_instrument_keys()
                 if silver_contracts:
-                    # Use the first (default) contract - typically SILVER with nearest expiry
+                    # Use the first (default) contract - nearest expiry (ascending order)
                     default_contract = silver_contracts[0]
                     instrument_key = default_contract.get("instrument_key")
                     contract_type = default_contract.get("contract_type")
                     trading_symbol = default_contract.get("trading_symbol")
+                    expiry = default_contract.get("expiry")
                     logger.info(f"Using default contract: {contract_type} ({trading_symbol})")
             except Exception as e:
                 logger.warning(f"Failed to fetch contract info: {e}")
@@ -269,6 +272,7 @@ class PredictionEngine:
             instrument_key=instrument_key,
             contract_type=contract_type,
             trading_symbol=trading_symbol,
+            expiry=expiry,
             # Prediction details
             prediction_time=prediction_time,
             target_time=target_time,
