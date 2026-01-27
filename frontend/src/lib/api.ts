@@ -491,7 +491,8 @@ export interface ModelStatus {
 export interface SchedulerJob {
   id: string;
   name: string;
-  next_run: string | null;
+  next_run?: string | null;
+  schedule?: string;
 }
 
 export interface SystemStatus {
