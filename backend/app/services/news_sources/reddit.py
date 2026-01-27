@@ -121,15 +121,15 @@ class RedditNewsFetcher:
                     "Authorization": f"Bearer {token}",
                     "User-Agent": "SilverPrediction/1.0 (by /u/silver_prediction_bot)",
                 }
+                url = f"{base_url}/r/{subreddit}/{sort}.json"
             else:
-                # Public JSON endpoint - requires proper User-Agent to avoid 403
-                base_url = "https://www.reddit.com"
+                # Use old.reddit.com which is more permissive for public JSON access
+                base_url = "https://old.reddit.com"
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (compatible)",
                     "Accept": "application/json",
                 }
-
-            url = f"{base_url}/r/{subreddit}/{sort}.json"
+                url = f"{base_url}/r/{subreddit}/{sort}.json"
             params = {"limit": limit, "t": time_filter}
 
             async with aiohttp.ClientSession() as session:
@@ -263,9 +263,10 @@ class RedditNewsFetcher:
                     "User-Agent": "SilverPrediction/1.0 (by /u/silver_prediction_bot)",
                 }
             else:
-                base_url = "https://www.reddit.com"
+                # Use old.reddit.com for better public access
+                base_url = "https://old.reddit.com"
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (compatible)",
                     "Accept": "application/json",
                 }
 
