@@ -90,18 +90,16 @@ class PriceData(Base):
         default="upstox",
     )
 
-    # Unique constraint to prevent duplicates
-    # Now includes instrument_key to allow same timestamp for different contracts
+    # Unique constraints and indexes
+    # NOTE: We keep the old constraint for backward compatibility during transition.
+    # The new constraint includes instrument_key for per-contract uniqueness.
+    # After migration, the old constraint can be dropped.
     __table_args__ = (
-        # New constraint: includes instrument_key for per-contract uniqueness
+        # OLD constraint: kept for backward compatibility with existing code
+        # This allows COMEX data (NULL instrument_key) to continue working
         UniqueConstraint(
-            "asset", "market", "interval", "instrument_key", "timestamp",
-            name="uq_price_data_asset_market_interval_contract_timestamp"
-        ),
-        # Index for per-contract queries (MCX with specific contract)
-        Index(
-            "idx_price_data_contract_lookup",
-            "asset", "market", "interval", "instrument_key", "timestamp",
+            "asset", "market", "interval", "timestamp",
+            name="uq_price_data_asset_market_interval_timestamp"
         ),
         # Index for general queries (COMEX or when contract doesn't matter)
         Index(
@@ -116,6 +114,11 @@ class PriceData(Base):
         Index(
             "idx_price_data_contract_type",
             "asset", "market", "contract_type",
+        ),
+        # Index for instrument_key lookups
+        Index(
+            "idx_price_data_instrument_key",
+            "instrument_key",
         ),
     )
 

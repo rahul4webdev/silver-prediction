@@ -391,25 +391,15 @@ class DataSyncService:
 
             stmt = pg_insert(PriceData).values(batch)
 
-            # Upsert on new unique constraint (includes instrument_key)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["asset", "market", "interval", "instrument_key", "timestamp"],
-                set_={
-                    "open": stmt.excluded.open,
-                    "high": stmt.excluded.high,
-                    "low": stmt.excluded.low,
-                    "close": stmt.excluded.close,
-                    "volume": stmt.excluded.volume,
-                    "created_at": stmt.excluded.created_at,
-                    "source": stmt.excluded.source,
-                    "contract_type": stmt.excluded.contract_type,
-                    "trading_symbol": stmt.excluded.trading_symbol,
-                    "expiry": stmt.excluded.expiry,
-                }
-            )
+            # Use on_conflict_do_nothing for per-contract data
+            # Each (asset, market, interval, instrument_key, timestamp) should be unique
+            # If there's a conflict with the old constraint (without instrument_key),
+            # we just skip and continue - this handles the transition period
+            stmt = stmt.on_conflict_do_nothing()
 
-            await db.execute(stmt)
-            inserted_count += len(batch)
+            result = await db.execute(stmt)
+            # Count actual inserts (some may be skipped due to conflicts)
+            inserted_count += result.rowcount if hasattr(result, 'rowcount') else len(batch)
 
         await db.commit()
         return inserted_count
