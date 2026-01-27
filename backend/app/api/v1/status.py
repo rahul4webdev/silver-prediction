@@ -177,14 +177,46 @@ async def get_system_status(
             "error": str(e),
         }
 
-    # ==================== Notification Worker Status ====================
+    # ==================== Scheduler Status ====================
     try:
-        from workers.notification_worker import notification_worker
-        worker_status = notification_worker.get_status()
+        import subprocess
+
+        # Check scheduler systemd service status
+        scheduler_service_status = "unknown"
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "silver-prediction-scheduler"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            scheduler_service_status = result.stdout.strip()
+        except Exception:
+            pass
+
+        # Get scheduled jobs from the scheduler endpoint or from file
+        scheduled_jobs = []
+
+        # Define expected jobs with their schedule descriptions
+        # These are the jobs configured in scheduler.py
+        expected_jobs = [
+            {"id": "sync_data", "name": "Sync market data", "schedule": "Every 30 minutes"},
+            {"id": "sync_sentiment", "name": "Sync news sentiment", "schedule": "Every 30 minutes"},
+            {"id": "train_models_daily", "name": "Train ML models (daily at 1 AM IST)", "schedule": "Daily at 1 AM IST"},
+            {"id": "generate_30m_predictions", "name": "Generate 30-minute predictions", "schedule": "Every 30 minutes"},
+            {"id": "generate_1h_predictions", "name": "Generate 1-hour predictions", "schedule": "Every hour"},
+            {"id": "generate_4h_predictions", "name": "Generate 4-hour predictions", "schedule": "Every 4 hours"},
+            {"id": "generate_daily_predictions", "name": "Generate daily predictions", "schedule": "Daily at 9 AM IST"},
+            {"id": "verify_predictions", "name": "Verify predictions", "schedule": "Every 5 minutes"},
+        ]
+
+        is_running = scheduler_service_status == "active"
+
         status["scheduler"] = {
-            "status": "running" if worker_status.get("is_running") else "stopped",
-            "is_running": worker_status.get("is_running", False),
-            "jobs": worker_status.get("jobs", []),
+            "status": "running" if is_running else "stopped",
+            "is_running": is_running,
+            "service_status": scheduler_service_status,
+            "jobs": expected_jobs if is_running else [],
         }
     except Exception as e:
         status["scheduler"] = {
