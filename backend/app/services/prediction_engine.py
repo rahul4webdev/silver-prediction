@@ -323,14 +323,7 @@ class PredictionEngine:
             },
         )
 
-        # Include sentiment and macro in response
-        prediction_dict = prediction.to_dict()
-        if sentiment_data:
-            prediction_dict["sentiment"] = sentiment_data
-        if macro_data:
-            prediction_dict["macro"] = macro_data
-
-        # Store prediction
+        # Store prediction first so we get the ID
         db.add(prediction)
         await db.commit()
         await db.refresh(prediction)
@@ -339,6 +332,13 @@ class PredictionEngine:
             f"Prediction saved: {prediction.predicted_direction} "
             f"({prediction.predicted_price}) with {prediction.direction_confidence:.2%} confidence"
         )
+
+        # Build response dict AFTER commit so we have the ID
+        prediction_dict = prediction.to_dict()
+        if sentiment_data:
+            prediction_dict["sentiment"] = sentiment_data
+        if macro_data:
+            prediction_dict["macro"] = macro_data
 
         return prediction_dict
 
