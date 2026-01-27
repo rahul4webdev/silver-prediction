@@ -243,8 +243,19 @@ class PredictionEngine:
         # Remove rows with NaN from feature calculation (keeps rows with 200+ candles of history)
         df = df.dropna()
 
-        # Get current price (latest from data)
-        current_price = float(df["close"].iloc[-1])
+        # Get current price - prefer live quote for the specific contract, fallback to latest data
+        current_price = float(df["close"].iloc[-1])  # Default from historical data
+
+        # For MCX with specific contract, get live price from Upstox
+        if market == "mcx" and instrument_key:
+            try:
+                quote = await upstox_client.get_live_quote(instrument_key)
+                if quote and quote.get("price"):
+                    live_price = float(quote["price"])
+                    logger.info(f"Using Upstox live price for {contract_type}: {live_price} (vs historical: {current_price})")
+                    current_price = live_price
+            except Exception as e:
+                logger.warning(f"Could not get live price for {contract_type}, using historical: {e}")
 
         # Use UTC time for prediction to match verification query
         # This ensures target_time comparison works correctly
