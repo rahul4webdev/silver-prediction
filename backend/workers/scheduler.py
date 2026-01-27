@@ -1,17 +1,25 @@
 """
 Scheduled tasks for data sync, model training, and prediction generation.
 Uses APScheduler for reliable scheduling.
+
+Training Strategy:
+- Hourly training during market hours (9 AM - 11:30 PM IST)
+- Uses: Historical data + Recent tick data + News sentiment
+- Training happens at :15 past each hour (9:15, 10:15, 11:15, etc.)
+- Last training at 11:15 PM covers data until close
 """
 
 import asyncio
 import logging
 from datetime import datetime, time, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -40,7 +48,7 @@ class SchedulerWorker:
     """
     Scheduler for automated tasks:
     - Data sync (every 30 minutes during market hours)
-    - Model training (daily at 6 AM IST)
+    - Model training (daily at 6 AM IST + hourly during market hours)
     - Prediction generation (every 30 minutes)
     - Prediction verification (every 5 minutes)
     """
@@ -87,6 +95,18 @@ class SchedulerWorker:
         current_time = now_ist.time()
         return MCX_MARKET_OPEN <= current_time <= MCX_MARKET_CLOSE
 
+    def _is_trading_day(self) -> bool:
+        """Check if today is a trading day (Mon-Fri, excluding holidays)."""
+        now_ist = datetime.now(IST)
+
+        # Check weekend
+        if now_ist.weekday() >= 5:
+            return False
+
+        # Check holidays
+        month_day = (now_ist.month, now_ist.day)
+        return month_day not in INDIAN_MARKET_HOLIDAYS
+
     def start(self):
         """Start the scheduler with all jobs."""
         if self._is_running:
@@ -102,12 +122,22 @@ class SchedulerWorker:
             replace_existing=True,
         )
 
-        # Schedule model training daily at 6 AM IST (00:30 UTC)
+        # Schedule daily model training at 6 AM IST (00:30 UTC)
         self.scheduler.add_job(
             self.train_models,
             CronTrigger(hour=0, minute=30),
             id="train_models",
-            name="Train ML models",
+            name="Train ML models (daily)",
+            replace_existing=True,
+        )
+
+        # Schedule hourly model training at :15 past each hour (during trading hours)
+        # This runs 9:15, 10:15, 11:15, ... 23:15 IST = 3:45, 4:45, ... 17:45 UTC
+        self.scheduler.add_job(
+            self.train_models_hourly,
+            CronTrigger(minute=15),
+            id="train_models_hourly",
+            name="Train ML models (hourly)",
             replace_existing=True,
         )
 
@@ -212,8 +242,8 @@ class SchedulerWorker:
             return {"status": "error", "error": str(e)}
 
     async def train_models(self):
-        """Train or retrain ML models."""
-        logger.info("Starting scheduled model training...")
+        """Train or retrain ML models (daily full training)."""
+        logger.info("Starting scheduled daily model training...")
 
         try:
             async with await self.get_session() as db:
@@ -230,12 +260,290 @@ class SchedulerWorker:
                             logger.error(f"Training failed for {market}/{interval}: {e}")
                             results[f"{market}_{interval}"] = {"status": "error", "error": str(e)}
 
-                logger.info(f"Model training complete: {results}")
+                logger.info(f"Daily model training complete: {results}")
                 return results
 
         except Exception as e:
-            logger.error(f"Model training failed: {e}")
+            logger.error(f"Daily model training failed: {e}")
             return {"status": "error", "error": str(e)}
+
+    async def train_models_hourly(self):
+        """
+        Hourly model training during market hours.
+
+        This trains models with:
+        1. Historical data from database
+        2. Recent tick data from the last hour (if available)
+        3. Latest news sentiment data
+
+        Training schedule:
+        - 9:15 AM IST: First training with overnight data
+        - 10:15 AM IST: Training with 9:00-10:00 tick data
+        - 11:15 AM IST: Training with 10:00-11:00 tick data
+        - ... continues hourly ...
+        - 11:15 PM IST: Last training with 10:00-11:00 PM tick data
+        """
+        # Skip if market is closed
+        if not self._is_market_open():
+            now_ist = datetime.now(IST)
+            logger.info(
+                f"Skipping hourly training - market closed "
+                f"(IST: {now_ist.strftime('%Y-%m-%d %H:%M')}, weekday: {now_ist.weekday()})"
+            )
+            return {"status": "skipped", "reason": "market_closed"}
+
+        now_ist = datetime.now(IST)
+        logger.info(f"Starting hourly model training at {now_ist.strftime('%H:%M')} IST...")
+
+        try:
+            async with await self.get_session() as db:
+                results = {
+                    "timestamp": datetime.now(IST).isoformat(),
+                    "training_hour": now_ist.hour,
+                    "markets": {},
+                }
+
+                # Get sentiment data first (used for all training)
+                sentiment_data = await self._get_sentiment_data()
+                results["sentiment"] = {
+                    "available": sentiment_data is not None,
+                    "label": sentiment_data.get("label") if sentiment_data else None,
+                    "score": sentiment_data.get("overall") if sentiment_data else None,
+                }
+
+                # Get recent tick data from the last hour
+                tick_stats = await self._get_recent_tick_stats(db)
+                results["tick_data"] = tick_stats
+
+                # Train models for each market/interval combination
+                for market in ["mcx", "comex"]:
+                    results["markets"][market] = {}
+
+                    for interval in ["30m", "1h", "4h", "1d"]:
+                        try:
+                            # Train with enhanced data (historical + sentiment)
+                            result = await self._train_with_enhanced_data(
+                                db, "silver", market, interval, sentiment_data, tick_stats
+                            )
+                            results["markets"][market][interval] = result
+                            logger.info(
+                                f"Hourly training {market}/{interval}: "
+                                f"{result.get('training_samples', 0)} samples, "
+                                f"sentiment: {sentiment_data.get('label') if sentiment_data else 'N/A'}"
+                            )
+                        except ValueError as e:
+                            # Insufficient data - not an error, just skip
+                            logger.info(f"Skipped {market}/{interval}: {e}")
+                            results["markets"][market][interval] = {"status": "skipped", "reason": str(e)}
+                        except Exception as e:
+                            logger.error(f"Hourly training failed for {market}/{interval}: {e}")
+                            results["markets"][market][interval] = {"status": "error", "error": str(e)}
+
+                logger.info(f"Hourly model training complete at {now_ist.strftime('%H:%M')} IST")
+                return results
+
+        except Exception as e:
+            logger.error(f"Hourly model training failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _get_sentiment_data(self) -> Optional[Dict[str, Any]]:
+        """Fetch current news sentiment for silver."""
+        try:
+            from app.services.news_sentiment import news_sentiment_service
+
+            sentiment = await news_sentiment_service.get_sentiment(
+                asset="silver",
+                lookback_days=3,  # Last 3 days of news
+            )
+
+            return {
+                "overall": sentiment.overall_sentiment,
+                "label": sentiment.sentiment_label,
+                "confidence": sentiment.confidence,
+                "article_count": sentiment.article_count,
+                "bullish_count": sentiment.bullish_count,
+                "bearish_count": sentiment.bearish_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get sentiment data: {e}")
+            return None
+
+    async def _get_recent_tick_stats(self, db: AsyncSession) -> Dict[str, Any]:
+        """
+        Get statistics from tick data collected in the last hour.
+
+        Returns OHLCV-like stats from real-time tick data.
+        """
+        try:
+            from app.models.tick_data import TickData
+
+            # Get ticks from the last hour
+            one_hour_ago = datetime.now(IST) - timedelta(hours=1)
+
+            result = await db.execute(
+                select(
+                    func.count(TickData.id).label("tick_count"),
+                    func.min(TickData.ltp).label("low"),
+                    func.max(TickData.ltp).label("high"),
+                    func.avg(TickData.ltp).label("avg"),
+                    func.sum(TickData.volume).label("total_volume"),
+                ).where(
+                    and_(
+                        TickData.asset == "silver",
+                        TickData.market == "mcx",
+                        TickData.timestamp >= one_hour_ago,
+                    )
+                )
+            )
+
+            row = result.first()
+
+            if row and row.tick_count > 0:
+                # Get first and last tick for open/close
+                first_tick = await db.execute(
+                    select(TickData.ltp)
+                    .where(
+                        and_(
+                            TickData.asset == "silver",
+                            TickData.market == "mcx",
+                            TickData.timestamp >= one_hour_ago,
+                        )
+                    )
+                    .order_by(TickData.timestamp.asc())
+                    .limit(1)
+                )
+                last_tick = await db.execute(
+                    select(TickData.ltp)
+                    .where(
+                        and_(
+                            TickData.asset == "silver",
+                            TickData.market == "mcx",
+                            TickData.timestamp >= one_hour_ago,
+                        )
+                    )
+                    .order_by(TickData.timestamp.desc())
+                    .limit(1)
+                )
+
+                first_price = first_tick.scalar()
+                last_price = last_tick.scalar()
+
+                return {
+                    "available": True,
+                    "tick_count": row.tick_count,
+                    "open": float(first_price) if first_price else None,
+                    "high": float(row.high) if row.high else None,
+                    "low": float(row.low) if row.low else None,
+                    "close": float(last_price) if last_price else None,
+                    "avg_price": float(row.avg) if row.avg else None,
+                    "total_volume": int(row.total_volume) if row.total_volume else 0,
+                    "period": "last_hour",
+                }
+
+            return {"available": False, "tick_count": 0, "reason": "no_ticks_in_last_hour"}
+
+        except Exception as e:
+            logger.warning(f"Failed to get tick stats: {e}")
+            return {"available": False, "error": str(e)}
+
+    async def _train_with_enhanced_data(
+        self,
+        db: AsyncSession,
+        asset: str,
+        market: str,
+        interval: str,
+        sentiment_data: Optional[Dict],
+        tick_stats: Dict,
+    ) -> Dict[str, Any]:
+        """
+        Train models with enhanced data including sentiment and recent ticks.
+
+        This method:
+        1. Gets historical OHLCV data
+        2. Adds technical features
+        3. Adds sentiment features if available
+        4. Trains the ensemble models
+        """
+        from app.ml.features.technical import add_technical_features
+
+        logger.debug(f"Training {asset}/{market}/{interval} with enhanced data...")
+
+        # Get historical data
+        df = await prediction_engine.get_recent_data(db, asset, market, interval, limit=10000)
+
+        # Minimum samples vary by interval
+        min_samples = {
+            "30m": 500,
+            "1h": 400,
+            "4h": 200,
+            "1d": 100,
+        }
+        required = min_samples.get(interval, 500)
+
+        if df.empty or len(df) < required:
+            raise ValueError(f"Insufficient data: {len(df)} rows, need at least {required}")
+
+        # Drop columns with all NaN values
+        df = df.dropna(axis=1, how='all')
+
+        # Add technical features
+        df = add_technical_features(df)
+
+        # Add sentiment features if available
+        if sentiment_data:
+            df["sentiment_score"] = sentiment_data.get("overall", 0)
+            df["sentiment_confidence"] = sentiment_data.get("confidence", 0.5)
+            df["news_article_count"] = sentiment_data.get("article_count", 0)
+            df["news_bullish_ratio"] = (
+                sentiment_data.get("bullish_count", 0) /
+                max(sentiment_data.get("article_count", 1), 1)
+            )
+            df["news_bearish_ratio"] = (
+                sentiment_data.get("bearish_count", 0) /
+                max(sentiment_data.get("article_count", 1), 1)
+            )
+
+            # Sentiment momentum (bullish = 1, bearish = -1, neutral = 0)
+            label = sentiment_data.get("label", "neutral")
+            if label == "bullish":
+                df["sentiment_direction"] = 1
+            elif label == "bearish":
+                df["sentiment_direction"] = -1
+            else:
+                df["sentiment_direction"] = 0
+
+        # Add recent tick volatility if available (for MCX)
+        if tick_stats.get("available") and market == "mcx":
+            # Recent price range as percentage of average
+            if tick_stats.get("high") and tick_stats.get("low") and tick_stats.get("avg_price"):
+                price_range = tick_stats["high"] - tick_stats["low"]
+                df["recent_tick_volatility"] = price_range / tick_stats["avg_price"] * 100
+                df["recent_tick_count"] = tick_stats.get("tick_count", 0)
+
+        # Remove rows with NaN from feature calculation
+        df = df.dropna()
+
+        if len(df) < required // 2:  # Allow some reduction due to NaN removal
+            raise ValueError(f"Too many NaN rows: {len(df)} valid rows after cleaning")
+
+        # Get ensemble and train
+        ensemble = prediction_engine.get_ensemble(interval)
+        results = ensemble.train_all(df)
+
+        # Save models
+        ensemble.save()
+
+        return {
+            "status": "success",
+            "asset": asset,
+            "market": market,
+            "interval": interval,
+            "training_samples": len(df),
+            "features_used": list(df.columns),
+            "sentiment_included": sentiment_data is not None,
+            "tick_data_included": tick_stats.get("available", False),
+            "results": results,
+        }
 
     async def _generate_predictions_for_interval(self, interval: str):
         """Generate predictions for a specific interval for both markets."""
