@@ -32,7 +32,7 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Use WebSocket for MCX real-time updates (now receives all contract prices)
-  const { price: wsPrice, prices: wsPrices, getPriceBySymbol, isConnected, connectionStatus } = usePriceUpdates(asset, market);
+  const { price: wsPrice, prices: wsPrices, getPriceBySymbol, isConnected, connectionStatus, send } = usePriceUpdates(asset, market);
 
   // Fetch MCX contracts on mount
   useEffect(() => {
