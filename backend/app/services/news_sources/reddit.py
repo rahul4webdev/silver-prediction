@@ -119,12 +119,15 @@ class RedditNewsFetcher:
                 base_url = "https://oauth.reddit.com"
                 headers = {
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": "SilverPrediction/1.0",
+                    "User-Agent": "SilverPrediction/1.0 (by /u/silver_prediction_bot)",
                 }
             else:
-                # Public JSON endpoint (rate limited)
+                # Public JSON endpoint - requires proper User-Agent to avoid 403
                 base_url = "https://www.reddit.com"
-                headers = {"User-Agent": "SilverPrediction/1.0"}
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                }
 
             url = f"{base_url}/r/{subreddit}/{sort}.json"
             params = {"limit": limit, "t": time_filter}
@@ -257,11 +260,14 @@ class RedditNewsFetcher:
                 base_url = "https://oauth.reddit.com"
                 headers = {
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": "SilverPrediction/1.0",
+                    "User-Agent": "SilverPrediction/1.0 (by /u/silver_prediction_bot)",
                 }
             else:
                 base_url = "https://www.reddit.com"
-                headers = {"User-Agent": "SilverPrediction/1.0"}
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                }
 
             if subreddit:
                 url = f"{base_url}/r/{subreddit}/search.json"
