@@ -391,11 +391,11 @@ class DataSyncService:
 
             stmt = pg_insert(PriceData).values(batch)
 
-            # Use on_conflict_do_update with the new constraint that includes instrument_key
+            # Use on_conflict_do_update with the unique index that includes instrument_key
             # This allows different contracts to have data for the same timestamp
-            # The constraint is: (asset, market, interval, COALESCE(instrument_key, 'none'), timestamp)
+            # The index is: (asset, market, interval, timestamp, instrument_key)
             stmt = stmt.on_conflict_do_update(
-                constraint="uq_price_data_asset_market_interval_contract_timestamp",
+                index_elements=["asset", "market", "interval", "timestamp", "instrument_key"],
                 set_={
                     "open": stmt.excluded.open,
                     "high": stmt.excluded.high,
@@ -648,10 +648,10 @@ class DataSyncService:
             stmt = pg_insert(PriceData).values(batch)
 
             # On conflict, update the price data (keeps the latest values)
-            # Uses the constraint that includes COALESCE(instrument_key, 'none')
-            # For COMEX data without instrument_key, it will use 'none'
+            # Uses the unique index that includes instrument_key
+            # For COMEX data without instrument_key, the NULL is part of the key
             stmt = stmt.on_conflict_do_update(
-                constraint="uq_price_data_asset_market_interval_contract_timestamp",
+                index_elements=["asset", "market", "interval", "timestamp", "instrument_key"],
                 set_={
                     "open": stmt.excluded.open,
                     "high": stmt.excluded.high,
