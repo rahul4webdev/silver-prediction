@@ -1,6 +1,8 @@
 """
 Price data model for storing OHLCV data from MCX and COMEX.
 Optimized for time-series queries using TimescaleDB.
+
+Updated to support per-contract data for MCX (SILVER, SILVERM, SILVERMIC).
 """
 
 from datetime import datetime
@@ -24,6 +26,9 @@ class PriceData(Base):
     """
     Stores OHLCV (Open, High, Low, Close, Volume) price data.
     This is the primary table for historical and real-time price data.
+
+    For MCX market, data is stored per-contract with instrument_key differentiation.
+    This allows separate training data for SILVER (30kg), SILVERM (5kg), SILVERMIC (1kg).
     """
 
     __tablename__ = "price_data"
@@ -35,6 +40,25 @@ class PriceData(Base):
     asset: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     market: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     interval: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+
+    # Contract identification (for MCX - multiple contracts per asset)
+    # For COMEX, these remain NULL as there's only one contract
+    instrument_key: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, index=True,
+        comment="Upstox instrument key (e.g., MCX_FO|451666)"
+    )
+    contract_type: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True,
+        comment="Contract type: SILVER, SILVERM, SILVERMIC"
+    )
+    trading_symbol: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+        comment="Human-readable symbol (e.g., SILVERM FUT 27 FEB 26)"
+    )
+    expiry: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Contract expiry date"
+    )
 
     # Timestamp (primary time column for TimescaleDB)
     timestamp: Mapped[datetime] = mapped_column(
@@ -67,11 +91,19 @@ class PriceData(Base):
     )
 
     # Unique constraint to prevent duplicates
+    # Now includes instrument_key to allow same timestamp for different contracts
     __table_args__ = (
+        # New constraint: includes instrument_key for per-contract uniqueness
         UniqueConstraint(
-            "asset", "market", "interval", "timestamp",
-            name="uq_price_data_asset_market_interval_timestamp"
+            "asset", "market", "interval", "instrument_key", "timestamp",
+            name="uq_price_data_asset_market_interval_contract_timestamp"
         ),
+        # Index for per-contract queries (MCX with specific contract)
+        Index(
+            "idx_price_data_contract_lookup",
+            "asset", "market", "interval", "instrument_key", "timestamp",
+        ),
+        # Index for general queries (COMEX or when contract doesn't matter)
         Index(
             "idx_price_data_lookup",
             "asset", "market", "interval", "timestamp",
@@ -79,6 +111,11 @@ class PriceData(Base):
         Index(
             "idx_price_data_timestamp_desc",
             timestamp.desc(),
+        ),
+        # Index for contract type queries
+        Index(
+            "idx_price_data_contract_type",
+            "asset", "market", "contract_type",
         ),
     )
 
@@ -100,6 +137,10 @@ class PriceData(Base):
             "asset": self.asset,
             "market": self.market,
             "interval": self.interval,
+            "instrument_key": self.instrument_key,
+            "contract_type": self.contract_type,
+            "trading_symbol": self.trading_symbol,
+            "expiry": self.expiry.isoformat() if self.expiry else None,
             "timestamp": self.timestamp.isoformat(),
             "open": float(self.open),
             "high": float(self.high),
@@ -126,8 +167,12 @@ class PriceData(Base):
         source: str = "upstox",
         open_interest: Optional[int] = None,
         vwap: Optional[float] = None,
+        instrument_key: Optional[str] = None,
+        contract_type: Optional[str] = None,
+        trading_symbol: Optional[str] = None,
+        expiry: Optional[datetime] = None,
     ) -> "PriceData":
-        """Create PriceData from candle data."""
+        """Create PriceData from candle data with optional contract info."""
         return cls(
             asset=asset,
             market=market,
@@ -141,4 +186,8 @@ class PriceData(Base):
             source=source,
             open_interest=open_interest,
             vwap=Decimal(str(vwap)) if vwap else None,
+            instrument_key=instrument_key,
+            contract_type=contract_type,
+            trading_symbol=trading_symbol,
+            expiry=expiry,
         )

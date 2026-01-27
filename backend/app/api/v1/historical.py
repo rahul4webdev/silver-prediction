@@ -655,6 +655,68 @@ async def sync_all_data(
     }
 
 
+@router.post("/sync-mcx-per-contract")
+async def sync_mcx_per_contract(
+    days: int = Query(60, le=365, description="Days of history to sync"),
+    clear_old: bool = Query(True, description="Clear old MCX data before syncing"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Sync MCX silver data per contract (SILVER, SILVERM, SILVERMIC).
+
+    This fetches historical data for each contract separately, allowing
+    per-contract model training and accurate predictions.
+
+    Args:
+        days: Days of history to sync (default 60, max 365)
+        clear_old: If true, clears old MCX data before syncing (recommended)
+
+    Returns:
+        Sync results per contract
+    """
+    from app.services.data_sync import data_sync_service
+
+    results = {}
+    intervals = ["30m", "1h", "4h", "1d"]
+
+    # Clear old MCX data if requested
+    if clear_old:
+        try:
+            await db.execute(
+                text("DELETE FROM price_data WHERE market = 'mcx'")
+            )
+            await db.execute(
+                text("DELETE FROM predictions WHERE market = 'mcx'")
+            )
+            await db.commit()
+            results["cleared_mcx_data"] = True
+            results["cleared_mcx_predictions"] = True
+            logger.info("Cleared old MCX data")
+        except Exception as e:
+            logger.error(f"Failed to clear MCX data: {e}")
+            results["clear_error"] = str(e)
+
+    # Sync each interval with per-contract data
+    for interval in intervals:
+        key = f"mcx_per_contract_{interval}"
+        try:
+            result = await data_sync_service.sync_mcx_data_per_contract(
+                db, "silver", interval, days
+            )
+            results[key] = result
+            logger.info(f"Per-contract sync complete for {interval}: {result.get('total_records', 0)} records")
+        except Exception as e:
+            logger.error(f"Per-contract sync failed for {interval}: {e}")
+            results[key] = {"status": "error", "error": str(e)}
+
+    return {
+        "status": "complete",
+        "days": days,
+        "clear_old": clear_old,
+        "results": results,
+    }
+
+
 @router.get("/factors")
 async def get_market_factors(
     period_days: int = Query(30, le=730),

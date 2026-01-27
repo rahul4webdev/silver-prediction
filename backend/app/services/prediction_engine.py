@@ -73,6 +73,7 @@ class PredictionEngine:
         market: str,
         interval: str,
         limit: int = 500,
+        instrument_key: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Get recent price data from database.
@@ -83,19 +84,25 @@ class PredictionEngine:
             market: Market code
             interval: Data interval
             limit: Number of candles to fetch
+            instrument_key: Specific contract instrument key (for MCX per-contract data)
 
         Returns:
             DataFrame with OHLCV data
         """
+        # Build query conditions
+        conditions = [
+            PriceData.asset == asset,
+            PriceData.market == market,
+            PriceData.interval == interval,
+        ]
+
+        # Filter by specific contract if provided (for MCX per-contract training)
+        if instrument_key:
+            conditions.append(PriceData.instrument_key == instrument_key)
+
         query = (
             select(PriceData)
-            .where(
-                and_(
-                    PriceData.asset == asset,
-                    PriceData.market == market,
-                    PriceData.interval == interval,
-                )
-            )
+            .where(and_(*conditions))
             .order_by(PriceData.timestamp.desc())
             .limit(limit)
         )
@@ -185,8 +192,18 @@ class PredictionEngine:
             except Exception as e:
                 logger.warning(f"Failed to fetch contract info: {e}")
 
-        # Get recent data
-        df = await self.get_recent_data(db, asset, market, interval)
+        # Get recent data - filter by specific contract if provided
+        # For MCX with instrument_key, this fetches contract-specific training data
+        df = await self.get_recent_data(
+            db, asset, market, interval,
+            instrument_key=instrument_key if market == "mcx" else None
+        )
+
+        if df.empty:
+            # If no contract-specific data, fall back to general data (for backward compatibility)
+            if instrument_key:
+                logger.warning(f"No contract-specific data for {instrument_key}, trying general data")
+                df = await self.get_recent_data(db, asset, market, interval)
 
         if df.empty:
             raise ValueError(f"No data available for {asset}/{market}/{interval}")
