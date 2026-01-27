@@ -350,12 +350,14 @@ class PredictionEngine:
         for prediction in pending:
             try:
                 # Get actual price at target time
+                # Pass instrument_key for MCX contracts to get accurate price
                 actual_price = await self._get_price_at_time(
                     db,
                     prediction.asset,
                     prediction.market,
                     prediction.interval,
                     prediction.target_time,
+                    instrument_key=prediction.instrument_key,
                 )
 
                 if actual_price is None:
@@ -404,14 +406,80 @@ class PredictionEngine:
         market: str,
         interval: str,
         target_time: datetime,
+        instrument_key: Optional[str] = None,
     ) -> Optional[float]:
         """
         Get the price at or closest to the target time.
-        Tries multiple sources: specific interval, then any interval, then tick data.
+
+        Priority order:
+        1. Tick data (most accurate for recent times)
+        2. Upstox live quote (for MCX, if target is recent)
+        3. Price data from database
+
+        Args:
+            db: Database session
+            asset: Asset code (silver, gold)
+            market: Market code (mcx, comex)
+            interval: Prediction interval (used for tolerance calculation)
+            target_time: The time we need the price for
+            instrument_key: Optional specific contract instrument key
+
+        Returns:
+            Price at target_time or None if not found
         """
-        # Try increasingly larger time windows
-        for tolerance_minutes in [30, 60, 120, 240]:
-            time_tolerance = timedelta(minutes=tolerance_minutes)
+        now = datetime.utcnow()
+        time_since_target = (now - target_time).total_seconds() / 60  # minutes
+
+        # Tolerance based on interval - should be tight for 30m, looser for daily
+        interval_tolerance = {
+            "30m": 15,   # 15 minutes tolerance for 30m predictions
+            "1h": 30,    # 30 minutes tolerance for 1h predictions
+            "4h": 60,    # 1 hour tolerance for 4h predictions
+            "1d": 240,   # 4 hours tolerance for daily predictions
+        }
+        base_tolerance = interval_tolerance.get(interval, 30)
+
+        # 1. Try tick data first (most accurate for recent times)
+        try:
+            from app.models.tick_data import TickData
+
+            time_tolerance = timedelta(minutes=base_tolerance)
+            query = (
+                select(TickData)
+                .where(
+                    and_(
+                        TickData.asset == asset,
+                        TickData.market == market,
+                        TickData.timestamp >= target_time - time_tolerance,
+                        TickData.timestamp <= target_time + time_tolerance,
+                    )
+                )
+                .order_by(func.abs(func.extract('epoch', TickData.timestamp - target_time)))
+                .limit(1)
+            )
+
+            result = await db.execute(query)
+            tick_data = result.scalar_one_or_none()
+
+            if tick_data and tick_data.ltp:
+                logger.info(f"Found price from tick data: {tick_data.ltp} at {tick_data.timestamp}")
+                return float(tick_data.ltp)
+        except Exception as e:
+            logger.debug(f"Could not query tick data: {e}")
+
+        # 2. For MCX, try Upstox live quote if target is recent (within 5 minutes)
+        if market == "mcx" and time_since_target <= 5:
+            try:
+                quote = await upstox_client.get_live_quote(instrument_key)
+                if quote and quote.get("price"):
+                    logger.info(f"Using Upstox live quote: {quote['price']}")
+                    return float(quote["price"])
+            except Exception as e:
+                logger.warning(f"Could not get Upstox live quote: {e}")
+
+        # 3. Try price_data with interval-appropriate tolerance
+        for tolerance_multiplier in [1, 2, 4]:  # Try increasing tolerance
+            time_tolerance = timedelta(minutes=base_tolerance * tolerance_multiplier)
 
             # First try with specific interval
             query = (
@@ -433,9 +501,10 @@ class PredictionEngine:
             price_data = result.scalar_one_or_none()
 
             if price_data:
+                logger.info(f"Found price from {interval} price_data: {price_data.close} at {price_data.timestamp}")
                 return float(price_data.close)
 
-            # If not found, try with any interval (for price verification we just need the price)
+            # Try with any interval if specific not found
             query = (
                 select(PriceData)
                 .where(
@@ -454,36 +523,8 @@ class PredictionEngine:
             price_data = result.scalar_one_or_none()
 
             if price_data:
-                logger.info(f"Found price using different interval: {price_data.interval}")
+                logger.info(f"Found price using {price_data.interval} data: {price_data.close}")
                 return float(price_data.close)
-
-        # Try tick data as last resort
-        try:
-            from app.models.tick_data import TickData
-
-            time_tolerance = timedelta(minutes=60)
-            query = (
-                select(TickData)
-                .where(
-                    and_(
-                        TickData.asset == asset,
-                        TickData.market == market,
-                        TickData.timestamp >= target_time - time_tolerance,
-                        TickData.timestamp <= target_time + time_tolerance,
-                    )
-                )
-                .order_by(func.abs(func.extract('epoch', TickData.timestamp - target_time)))
-                .limit(1)
-            )
-
-            result = await db.execute(query)
-            tick_data = result.scalar_one_or_none()
-
-            if tick_data:
-                logger.info(f"Found price from tick data")
-                return float(tick_data.ltp)
-        except Exception as e:
-            logger.debug(f"Could not query tick data: {e}")
 
         logger.warning(f"No price data found for {asset}/{market} at {target_time}")
         return None

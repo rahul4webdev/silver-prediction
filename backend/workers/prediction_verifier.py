@@ -120,129 +120,31 @@ celery_app.conf.update(
 )
 
 # Beat schedule for periodic tasks
-# Predictions for all intervals and both assets
+# NOTE: Prediction generation is handled by APScheduler (scheduler.py) which has
+# market hour awareness. Celery Beat only handles verification and data sync.
+# This avoids duplication between the two schedulers.
 celery_app.conf.beat_schedule = {
     # Verification - every minute (always runs to catch up on verifications)
+    # This is the primary verification mechanism for timely results
     "verify-predictions-every-minute": {
         "task": "workers.prediction_verifier.verify_pending_predictions",
         "schedule": 60.0,
     },
 
-    # Silver MCX - all intervals
-    "generate-silver-mcx-30m": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 1800.0,  # 30 minutes
-        "args": ["silver", "mcx", "30m"],
-    },
-    "generate-silver-mcx-1h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 3600.0,  # 1 hour
-        "args": ["silver", "mcx", "1h"],
-    },
-    "generate-silver-mcx-4h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 14400.0,  # 4 hours
-        "args": ["silver", "mcx", "4h"],
-    },
-    "generate-silver-mcx-daily": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 86400.0,  # Daily
-        "args": ["silver", "mcx", "1d"],
-    },
-
-    # Silver COMEX - all intervals
-    "generate-silver-comex-30m": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 1800.0,
-        "args": ["silver", "comex", "30m"],
-    },
-    "generate-silver-comex-1h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 3600.0,
-        "args": ["silver", "comex", "1h"],
-    },
-    "generate-silver-comex-4h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 14400.0,
-        "args": ["silver", "comex", "4h"],
-    },
-    "generate-silver-comex-daily": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 86400.0,
-        "args": ["silver", "comex", "1d"],
-    },
-
-    # Gold MCX - all intervals
-    "generate-gold-mcx-30m": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 1800.0,
-        "args": ["gold", "mcx", "30m"],
-    },
-    "generate-gold-mcx-1h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 3600.0,
-        "args": ["gold", "mcx", "1h"],
-    },
-    "generate-gold-mcx-4h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 14400.0,
-        "args": ["gold", "mcx", "4h"],
-    },
-    "generate-gold-mcx-daily": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 86400.0,
-        "args": ["gold", "mcx", "1d"],
-    },
-
-    # Gold COMEX - all intervals
-    "generate-gold-comex-30m": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 1800.0,
-        "args": ["gold", "comex", "30m"],
-    },
-    "generate-gold-comex-1h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 3600.0,
-        "args": ["gold", "comex", "1h"],
-    },
-    "generate-gold-comex-4h": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 14400.0,
-        "args": ["gold", "comex", "4h"],
-    },
-    "generate-gold-comex-daily": {
-        "task": "workers.prediction_verifier.generate_predictions",
-        "schedule": 86400.0,
-        "args": ["gold", "comex", "1d"],
-    },
-
-    # Data sync - every 5 minutes (only during market hours)
+    # Data sync - every 5 minutes (has its own market hour check)
     "sync-market-data-every-5-minutes": {
         "task": "workers.prediction_verifier.sync_market_data",
         "schedule": 300.0,
     },
 
-    # Model retraining - daily for key intervals
-    "retrain-silver-mcx-30m": {
-        "task": "workers.prediction_verifier.retrain_models",
-        "schedule": 86400.0,
-        "args": ["silver", "mcx", "30m"],
-    },
-    "retrain-silver-mcx-1h": {
-        "task": "workers.prediction_verifier.retrain_models",
-        "schedule": 86400.0,
-        "args": ["silver", "mcx", "1h"],
-    },
-    "retrain-gold-mcx-30m": {
-        "task": "workers.prediction_verifier.retrain_models",
-        "schedule": 86400.0,
-        "args": ["gold", "mcx", "30m"],
-    },
-    "retrain-gold-mcx-1h": {
-        "task": "workers.prediction_verifier.retrain_models",
-        "schedule": 86400.0,
-        "args": ["gold", "mcx", "1h"],
-    },
+    # NOTE: Prediction generation tasks are DISABLED here to avoid duplication
+    # with APScheduler. APScheduler handles predictions because:
+    # 1. It has built-in market hour awareness (_is_market_open check)
+    # 2. It generates for 3 MCX contracts (SILVER, SILVERM, SILVERMIC)
+    # 3. It uses CronTrigger for precise timing (at :00 and :30)
+    #
+    # If you need to enable Celery-based predictions (e.g., for distributed workers),
+    # disable the corresponding jobs in scheduler.py first.
 }
 
 
