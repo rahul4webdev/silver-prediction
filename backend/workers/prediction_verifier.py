@@ -28,11 +28,50 @@ MCX_MARKET_CLOSE = time(23, 30)  # 11:30 PM IST
 # COMEX is nearly 24 hours (6 PM to 5 PM next day EST)
 # We'll consider it always open for simplicity
 
+# Indian market holidays for 2025 & 2026 (month, day)
+INDIAN_MARKET_HOLIDAYS = {
+    # 2025
+    (1, 26),   # Republic Day
+    (2, 26),   # Maha Shivaratri
+    (3, 14),   # Holi
+    (3, 31),   # Id-ul-Fitr (tentative)
+    (4, 10),   # Mahavir Jayanti
+    (4, 14),   # Dr. Ambedkar Jayanti
+    (4, 18),   # Good Friday
+    (5, 1),    # May Day
+    (6, 7),    # Id-ul-Adha (tentative)
+    (7, 6),    # Muharram (tentative)
+    (8, 15),   # Independence Day
+    (8, 16),   # Parsi New Year
+    (9, 5),    # Milad-un-Nabi (tentative)
+    (10, 2),   # Gandhi Jayanti
+    (10, 21),  # Dussehra
+    (10, 22),  # Dussehra
+    (11, 5),   # Diwali (Laxmi Puja)
+    (11, 6),   # Diwali Balipratipada
+    (11, 7),   # Diwali (Bhai Dooj)
+    (12, 25),  # Christmas
+    # 2026 (add as needed)
+    (1, 26),   # Republic Day
+}
+
 
 def is_mcx_market_open() -> bool:
-    """Check if MCX market is currently open (9 AM - 11:30 PM IST)."""
-    now_ist = datetime.now(IST).time()
-    return MCX_MARKET_OPEN <= now_ist <= MCX_MARKET_CLOSE
+    """Check if MCX market is currently open (9 AM - 11:30 PM IST, Mon-Fri, excluding holidays)."""
+    now_ist = datetime.now(IST)
+
+    # Check weekend first (Saturday=5, Sunday=6)
+    if now_ist.weekday() >= 5:
+        return False
+
+    # Check holidays
+    month_day = (now_ist.month, now_ist.day)
+    if month_day in INDIAN_MARKET_HOLIDAYS:
+        return False
+
+    # Check time
+    current_time = now_ist.time()
+    return MCX_MARKET_OPEN <= current_time <= MCX_MARKET_CLOSE
 
 
 def is_comex_market_open() -> bool:

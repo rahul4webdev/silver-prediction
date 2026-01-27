@@ -136,15 +136,10 @@ class TickCollectorWorker:
         return max(seconds_until, 60)  # Minimum 1 minute
 
     def _reload_token_from_env(self) -> bool:
-        """Reload access token from environment variable if available."""
+        """Reload access token from environment variable or .env file."""
         try:
-            # Re-read from environment (for cases where .env was updated)
-            token = os.environ.get('UPSTOX_ACCESS_TOKEN')
-            if token and token != upstox_client.access_token:
-                upstox_client.set_access_token(token)
-                logger.info("Reloaded Upstox access token from environment")
-                return True
-            return False
+            # Use the client's built-in method that reads from .env file
+            return upstox_client.reload_token_from_env()
         except Exception as e:
             logger.warning(f"Failed to reload token: {e}")
             return False

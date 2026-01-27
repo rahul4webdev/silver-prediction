@@ -302,9 +302,11 @@ class NotificationWorker:
             except Exception:
                 pass
 
-            # Check Upstox auth
+            # Check Upstox auth - reload token first in case it was updated by API server
             upstox_authenticated = False
             try:
+                # Reload token from .env in case OAuth was completed in another process
+                upstox_client.reload_token_from_env()
                 auth_status = await upstox_client.verify_authentication()
                 upstox_authenticated = auth_status.get("authenticated", False)
             except Exception:

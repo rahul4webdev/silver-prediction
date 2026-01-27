@@ -102,18 +102,24 @@ async def get_system_status(
     # ==================== Upstox Status ====================
     try:
         from app.services.upstox_client import upstox_client
+        # Reload token from .env in case it was updated by OAuth in another process
+        upstox_client.reload_token_from_env()
         auth_status = await upstox_client.verify_authentication()
+        user_data = auth_status.get("user", {})
         status["services"]["upstox"] = {
             "status": "healthy" if auth_status.get("authenticated") else "needs_auth",
             "authenticated": auth_status.get("authenticated", False),
-            "user_id": auth_status.get("user_id"),
-            "user_name": auth_status.get("user_name"),
+            "user_id": user_data.get("user_id"),
+            "user_name": user_data.get("user_name"),
+            "reason": auth_status.get("reason"),
+            "reauth_url": "/api/v1/auth/upstox/reauth" if not auth_status.get("authenticated") else None,
         }
     except Exception as e:
         status["services"]["upstox"] = {
             "status": "unhealthy",
             "authenticated": False,
             "error": str(e),
+            "reauth_url": "/api/v1/auth/upstox/reauth",
         }
 
     # ==================== Tick Collector Status ====================
@@ -234,13 +240,22 @@ async def get_system_status(
     }
 
     # ==================== Overall Health ====================
-    all_healthy = (
+    # Core services that must be healthy
+    core_healthy = (
         status["services"].get("database", {}).get("status") == "healthy" and
-        status["services"].get("redis", {}).get("status") == "healthy" and
-        status["services"].get("upstox", {}).get("authenticated", False)
+        status["services"].get("redis", {}).get("status") == "healthy"
     )
 
-    status["overall_health"] = "healthy" if all_healthy else "degraded"
+    # Upstox is optional - can use Yahoo Finance proxy
+    upstox_ok = status["services"].get("upstox", {}).get("authenticated", False)
+
+    # Determine overall status
+    if core_healthy and upstox_ok:
+        status["overall_health"] = "healthy"
+    elif core_healthy:
+        status["overall_health"] = "operational"  # Working but using fallback data source
+    else:
+        status["overall_health"] = "degraded"
 
     return status
 

@@ -5,8 +5,9 @@ Uses APScheduler for reliable scheduling.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -19,6 +20,20 @@ from app.services.data_sync import data_sync_service
 from app.services.prediction_engine import prediction_engine
 
 logger = logging.getLogger(__name__)
+
+# Timezone
+IST = ZoneInfo("Asia/Kolkata")
+
+# MCX Market Hours
+MCX_MARKET_OPEN = time(9, 0)   # 9:00 AM IST
+MCX_MARKET_CLOSE = time(23, 30)  # 11:30 PM IST
+
+# Indian market holidays (month, day)
+INDIAN_MARKET_HOLIDAYS = {
+    (1, 26), (2, 26), (3, 14), (3, 31), (4, 10), (4, 14), (4, 18),
+    (5, 1), (6, 7), (7, 6), (8, 15), (8, 16), (9, 5), (10, 2),
+    (10, 21), (10, 22), (11, 5), (11, 6), (11, 7), (12, 25),
+}
 
 
 class SchedulerWorker:
@@ -54,6 +69,23 @@ class SchedulerWorker:
     async def get_session(self) -> AsyncSession:
         """Get a new database session."""
         return self.async_session()
+
+    def _is_market_open(self) -> bool:
+        """Check if MCX market is currently open (9 AM - 11:30 PM IST, Mon-Fri, excluding holidays)."""
+        now_ist = datetime.now(IST)
+
+        # Check weekend (Saturday=5, Sunday=6)
+        if now_ist.weekday() >= 5:
+            return False
+
+        # Check holidays
+        month_day = (now_ist.month, now_ist.day)
+        if month_day in INDIAN_MARKET_HOLIDAYS:
+            return False
+
+        # Check time
+        current_time = now_ist.time()
+        return MCX_MARKET_OPEN <= current_time <= MCX_MARKET_CLOSE
 
     def start(self):
         """Start the scheduler with all jobs."""
@@ -207,6 +239,15 @@ class SchedulerWorker:
 
     async def _generate_predictions_for_interval(self, interval: str):
         """Generate predictions for a specific interval for both markets."""
+        # Skip if market is closed
+        if not self._is_market_open():
+            now_ist = datetime.now(IST)
+            logger.info(
+                f"Skipping {interval} predictions - market closed "
+                f"(IST: {now_ist.strftime('%Y-%m-%d %H:%M')}, weekday: {now_ist.weekday()})"
+            )
+            return {"status": "skipped", "reason": "market_closed"}
+
         logger.info(f"Generating {interval} predictions...")
 
         try:

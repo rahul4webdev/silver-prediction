@@ -83,6 +83,56 @@ class UpstoxClient:
         """Check if client has a valid access token."""
         return bool(self.access_token)
 
+    def reload_token_from_env(self) -> bool:
+        """
+        Reload the access token from environment/settings.
+
+        This is needed because the token might have been updated by another
+        process (e.g., the API server after OAuth callback) and saved to .env.
+        Workers running in separate processes need to call this to pick up
+        the new token.
+
+        Returns:
+            True if a new token was loaded, False otherwise.
+        """
+        import os
+        from pathlib import Path
+
+        old_token = self.access_token
+        new_token = None
+
+        # First try environment variable (might be set by systemd reload)
+        new_token = os.environ.get("UPSTOX_ACCESS_TOKEN")
+
+        # If not in env, try reading from .env file directly
+        if not new_token:
+            env_paths = [
+                Path("/home/predictionapi.gahfaudio.in/public_html/.env"),
+                Path(__file__).parent.parent.parent.parent / ".env",  # backend/../.env
+            ]
+
+            for env_path in env_paths:
+                if env_path.exists():
+                    try:
+                        content = env_path.read_text()
+                        for line in content.split("\n"):
+                            if line.startswith("UPSTOX_ACCESS_TOKEN="):
+                                new_token = line.split("=", 1)[1].strip()
+                                if new_token:
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Failed to read {env_path}: {e}")
+
+                if new_token:
+                    break
+
+        if new_token and new_token != old_token:
+            self.access_token = new_token
+            logger.info("Upstox access token reloaded from environment")
+            return True
+
+        return False
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._http_client is None or self._http_client.is_closed:

@@ -34,7 +34,10 @@ export default function StatusPage() {
       case 'running':
       case 'authenticated':
       case 'open':
+      case 'available':
         return 'text-green-400 bg-green-500/20';
+      case 'operational':
+        return 'text-blue-400 bg-blue-500/20';
       case 'degraded':
       case 'needs_auth':
       case 'stopped':
@@ -53,7 +56,10 @@ export default function StatusPage() {
       case 'healthy':
       case 'running':
       case 'authenticated':
+      case 'available':
         return '✓';
+      case 'operational':
+        return '◐';
       case 'degraded':
       case 'needs_auth':
       case 'stopped':
@@ -70,6 +76,8 @@ export default function StatusPage() {
     const memoryUsed = service.memory_used as string | undefined;
     const userName = service.user_name as string | undefined;
     const tickCount = service.tick_count as number | undefined;
+    const reason = service.reason as string | undefined;
+    const reauthUrl = service.reauth_url as string | undefined;
 
     return (
       <div className="glass-card p-4">
@@ -83,6 +91,19 @@ export default function StatusPage() {
           <p className="text-xs text-red-400 mt-1 truncate" title={service.error}>
             {service.error}
           </p>
+        ) : null}
+        {reason && service.status === 'needs_auth' ? (
+          <p className="text-xs text-yellow-400 mt-1">{reason === 'token_expired' ? 'Token expired' : reason === 'no_token' ? 'No token set' : reason}</p>
+        ) : null}
+        {reauthUrl && service.status === 'needs_auth' ? (
+          <a
+            href={`${process.env.NEXT_PUBLIC_API_URL || 'https://predictionapi.gahfaudio.in'}${reauthUrl}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-cyan-400 hover:text-cyan-300 mt-1 block"
+          >
+            Click to re-authenticate →
+          </a>
         ) : null}
         {memoryUsed ? (
           <p className="text-xs text-zinc-500 mt-1">Memory: {memoryUsed}</p>
@@ -181,8 +202,11 @@ export default function StatusPage() {
               'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-lg font-medium',
               getStatusColor(status.overall_health)
             )}>
-              {status.overall_health === 'healthy' ? '●' : '◐'} {status.overall_health.toUpperCase()}
+              {getStatusIcon(status.overall_health)} {status.overall_health.toUpperCase()}
             </span>
+            {status.overall_health === 'operational' && (
+              <p className="text-xs text-blue-400 mt-1">Using Yahoo Finance (Upstox not connected)</p>
+            )}
             {lastUpdated && (
               <p className="text-xs text-zinc-500 mt-2">
                 Last updated: {lastUpdated.toLocaleTimeString()}
