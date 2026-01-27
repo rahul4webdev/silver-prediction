@@ -140,10 +140,19 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
-    # News Sentiment
+    # News Sentiment - Multiple Sources
     # ==========================================================================
     newsapi_key: Optional[str] = Field(
         default=None, description="NewsAPI.org API key (optional, for enhanced sentiment)"
+    )
+    finnhub_api_key: Optional[str] = Field(
+        default=None, description="Finnhub API key (free tier available)"
+    )
+    reddit_client_id: Optional[str] = Field(
+        default=None, description="Reddit API client ID (optional, for social sentiment)"
+    )
+    reddit_client_secret: Optional[str] = Field(
+        default=None, description="Reddit API client secret"
     )
 
     # ==========================================================================

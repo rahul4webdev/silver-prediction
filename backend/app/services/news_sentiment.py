@@ -3,9 +3,12 @@ News sentiment analysis service for silver/gold price prediction.
 Fetches financial news and analyzes sentiment to provide features for ML models.
 
 Uses multiple news sources:
-1. NewsAPI.org - General financial news
-2. Google News RSS - Free alternative
-3. FinViz - Financial news aggregator
+1. Google News RSS - Free, no API key needed
+2. NewsAPI.org - General financial news (optional API key)
+3. Finnhub - Commodities news (free tier API key)
+4. Reddit - Social sentiment from r/silverbugs, r/wallstreetsilver
+5. Kitco - Precious metals focused news (RSS feeds)
+6. Alpha Vantage - Market news with built-in sentiment (free tier API key)
 """
 
 import asyncio
@@ -19,6 +22,17 @@ import aiohttp
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Import new news sources
+try:
+    from app.services.news_sources.finnhub import FinnhubNewsFetcher
+    from app.services.news_sources.reddit import RedditNewsFetcher
+    from app.services.news_sources.kitco import KitcoNewsFetcher
+    from app.services.news_sources.alpha_vantage import AlphaVantageNewsFetcher
+    NEWS_SOURCES_AVAILABLE = True
+except ImportError:
+    NEWS_SOURCES_AVAILABLE = False
+    logger.warning("Additional news sources not available")
 
 
 class NewsArticle(BaseModel):
@@ -103,6 +117,10 @@ class NewsSentimentService:
     def __init__(
         self,
         newsapi_key: Optional[str] = None,
+        finnhub_api_key: Optional[str] = None,
+        alpha_vantage_api_key: Optional[str] = None,
+        reddit_client_id: Optional[str] = None,
+        reddit_client_secret: Optional[str] = None,
         cache_ttl_minutes: int = 15,
     ):
         """
@@ -110,11 +128,45 @@ class NewsSentimentService:
 
         Args:
             newsapi_key: Optional API key for NewsAPI.org
+            finnhub_api_key: Optional API key for Finnhub
+            alpha_vantage_api_key: Optional API key for Alpha Vantage
+            reddit_client_id: Optional Reddit app client ID
+            reddit_client_secret: Optional Reddit app client secret
             cache_ttl_minutes: Cache time-to-live in minutes
         """
         self.newsapi_key = newsapi_key
+        self.finnhub_api_key = finnhub_api_key
+        self.alpha_vantage_api_key = alpha_vantage_api_key
+        self.reddit_client_id = reddit_client_id
+        self.reddit_client_secret = reddit_client_secret
         self.cache_ttl = timedelta(minutes=cache_ttl_minutes)
         self._cache: Dict[str, tuple] = {}  # {key: (timestamp, data)}
+
+        # Initialize additional news fetchers
+        self._finnhub = None
+        self._reddit = None
+        self._kitco = None
+        self._alpha_vantage = None
+
+        if NEWS_SOURCES_AVAILABLE:
+            if finnhub_api_key:
+                self._finnhub = FinnhubNewsFetcher(api_key=finnhub_api_key)
+                logger.info("Finnhub news source enabled")
+
+            # Reddit works without API key (limited) or with credentials (better)
+            self._reddit = RedditNewsFetcher(
+                client_id=reddit_client_id,
+                client_secret=reddit_client_secret,
+            )
+            logger.info(f"Reddit news source enabled (OAuth: {bool(reddit_client_id)})")
+
+            # Kitco doesn't need API key
+            self._kitco = KitcoNewsFetcher()
+            logger.info("Kitco news source enabled")
+
+            if alpha_vantage_api_key:
+                self._alpha_vantage = AlphaVantageNewsFetcher(api_key=alpha_vantage_api_key)
+                logger.info("Alpha Vantage news source enabled")
 
     def _get_cache(self, key: str) -> Optional[Any]:
         """Get cached data if not expired."""
@@ -349,6 +401,14 @@ class NewsSentimentService:
         """
         Get aggregated sentiment for an asset.
 
+        Fetches from multiple sources:
+        1. Google News RSS (always available)
+        2. NewsAPI (if API key configured)
+        3. Finnhub (if API key configured)
+        4. Reddit (always available, better with credentials)
+        5. Kitco (always available, RSS feeds)
+        6. Alpha Vantage (if API key configured)
+
         Args:
             asset: Asset to analyze (silver, gold)
             lookback_days: Days of news to analyze
@@ -369,22 +429,73 @@ class NewsSentimentService:
         else:
             queries = [f"{asset} price", f"{asset} commodity"]
 
-        # Fetch articles from multiple sources
+        # Fetch articles from multiple sources concurrently
         all_articles = []
+        source_stats = {"google": 0, "newsapi": 0, "finnhub": 0, "reddit": 0, "kitco": 0, "alphavantage": 0}
 
-        # Fetch from Google News RSS (free)
+        # Create tasks for all sources
+        tasks = []
+
+        # Google News RSS (always)
         for query in queries:
-            articles = await self.fetch_google_news_rss(query)
-            all_articles.extend(articles)
+            tasks.append(("google", self.fetch_google_news_rss(query)))
 
-        # Fetch from NewsAPI if key available
+        # NewsAPI if key available
         if self.newsapi_key:
-            for query in queries[:1]:  # Limit API calls
-                articles = await self.fetch_newsapi(
-                    query,
-                    from_date=datetime.now() - timedelta(days=lookback_days),
-                )
-                all_articles.extend(articles)
+            tasks.append(("newsapi", self.fetch_newsapi(
+                queries[0],
+                from_date=datetime.now() - timedelta(days=lookback_days),
+            )))
+
+        # Finnhub if available
+        if self._finnhub:
+            tasks.append(("finnhub", self._finnhub.fetch_news()))
+
+        # Reddit (works without API key)
+        if self._reddit:
+            if asset.lower() == "silver":
+                tasks.append(("reddit", self._reddit.fetch_silver_posts(limit_per_sub=15)))
+            else:
+                tasks.append(("reddit", self._reddit.fetch_gold_posts(limit_per_sub=15)))
+
+        # Kitco (no API key needed)
+        if self._kitco:
+            if asset.lower() == "silver":
+                tasks.append(("kitco", self._kitco.fetch_silver_news()))
+            else:
+                tasks.append(("kitco", self._kitco.fetch_gold_news()))
+
+        # Alpha Vantage if available
+        if self._alpha_vantage:
+            if asset.lower() == "silver":
+                tasks.append(("alphavantage", self._alpha_vantage.fetch_silver_news()))
+            else:
+                tasks.append(("alphavantage", self._alpha_vantage.fetch_gold_news()))
+
+        # Execute all tasks concurrently
+        for source, task in tasks:
+            try:
+                articles = await task
+                if articles:
+                    # Convert to NewsArticle format
+                    for article_data in articles:
+                        if isinstance(article_data, dict):
+                            article = NewsArticle(
+                                title=article_data.get("title", ""),
+                                description=article_data.get("description"),
+                                source=article_data.get("source", source),
+                                published_at=article_data.get("published_at", datetime.now()),
+                                url=article_data.get("url", ""),
+                                # Use pre-computed sentiment from Alpha Vantage if available
+                                sentiment_score=article_data.get("av_sentiment_score"),
+                            )
+                            all_articles.append(article)
+                            source_stats[source] += 1
+                        elif isinstance(article_data, NewsArticle):
+                            all_articles.append(article_data)
+                            source_stats[source] += 1
+            except Exception as e:
+                logger.warning(f"Failed to fetch from {source}: {e}")
 
         # Filter by date
         cutoff = datetime.now() - timedelta(days=lookback_days)
@@ -471,6 +582,14 @@ class NewsSentimentService:
                 timestamp=datetime.now(),
                 articles=analyzed_articles[:10],  # Return top 10 articles
             )
+
+        # Log source statistics
+        active_sources = {k: v for k, v in source_stats.items() if v > 0}
+        logger.info(
+            f"Sentiment for {asset}: {result.sentiment_label} "
+            f"({result.overall_sentiment:.3f}), "
+            f"{result.article_count} articles from {len(active_sources)} sources: {active_sources}"
+        )
 
         self._set_cache(cache_key, result)
         return result
@@ -594,11 +713,16 @@ class NewsSentimentService:
             if sentiment_7d_avg is not None:
                 sentiment_momentum = sentiment.overall_sentiment - sentiment_7d_avg
 
-            # Count sources
+            # Count sources - track all sources now
             google_count = sum(
                 1 for a in sentiment.articles if "Google" in a.source
             )
-            newsapi_count = sentiment.article_count - google_count
+            # Count other sources (Finnhub, Reddit, Kitco, Alpha Vantage counted in newsapi_count for now)
+            other_count = sum(
+                1 for a in sentiment.articles
+                if any(src in a.source for src in ["Finnhub", "Reddit", "Kitco", "AlphaVantage"])
+            )
+            newsapi_count = sentiment.article_count - google_count - other_count
 
             record = {
                 "asset": asset,
@@ -745,11 +869,36 @@ class NewsSentimentService:
 
 # Create singleton with config
 def _create_service() -> NewsSentimentService:
-    """Create service with optional API key from config."""
+    """Create service with API keys from config."""
     try:
         from app.core.config import settings
-        return NewsSentimentService(newsapi_key=settings.newsapi_key)
-    except Exception:
+
+        # Log which sources are available
+        sources = []
+        if settings.newsapi_key:
+            sources.append("NewsAPI")
+        if getattr(settings, "finnhub_api_key", None):
+            sources.append("Finnhub")
+        if getattr(settings, "reddit_client_id", None):
+            sources.append("Reddit(OAuth)")
+        else:
+            sources.append("Reddit(public)")
+        sources.append("Kitco")  # Always available
+        sources.append("Google News")  # Always available
+        if settings.alpha_vantage_api_key:
+            sources.append("Alpha Vantage")
+
+        logger.info(f"News sentiment sources: {', '.join(sources)}")
+
+        return NewsSentimentService(
+            newsapi_key=settings.newsapi_key,
+            finnhub_api_key=getattr(settings, "finnhub_api_key", None),
+            alpha_vantage_api_key=settings.alpha_vantage_api_key,
+            reddit_client_id=getattr(settings, "reddit_client_id", None),
+            reddit_client_secret=getattr(settings, "reddit_client_secret", None),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load settings for news service: {e}")
         return NewsSentimentService()
 
 
