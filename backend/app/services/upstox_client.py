@@ -716,6 +716,17 @@ class UpstoxClient:
             ohlc = quote.get("ohlc", {})
             price = ohlc.get("close") or ohlc.get("open")
 
+        # Get change values
+        net_change = quote.get("net_change")
+        percentage_change = quote.get("percentage_change")
+
+        # Calculate percentage_change if not provided but we have net_change and close
+        if percentage_change is None and net_change is not None and price:
+            # Previous close = current price - net change
+            prev_close = price - net_change
+            if prev_close and prev_close > 0:
+                percentage_change = (net_change / prev_close) * 100
+
         return {
             "symbol": symbol_key,
             "price": price,
@@ -723,8 +734,8 @@ class UpstoxClient:
             "high": quote.get("ohlc", {}).get("high"),
             "low": quote.get("ohlc", {}).get("low"),
             "close": quote.get("ohlc", {}).get("close"),
-            "change": quote.get("net_change"),
-            "change_percent": quote.get("percentage_change"),
+            "change": net_change,
+            "change_percent": percentage_change,
             "volume": quote.get("volume"),
             "timestamp": datetime.now(),
             "market": "mcx",
