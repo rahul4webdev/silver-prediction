@@ -666,10 +666,12 @@ class DataSyncService:
                     }
                 )
             else:
-                # COMEX data - use index_elements for the columns that form the unique key
-                # Note: For COMEX, instrument_key is NULL, so we only use the 4 basic columns
+                # COMEX data - use the partial unique index for NULL instrument_key
+                # The index is: uq_price_data_comex_basic ON (asset, market, interval, timestamp) WHERE instrument_key IS NULL
+                # We need to use index_elements with index_where to match the partial index
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["asset", "market", "interval", "timestamp"],
+                    index_where=PriceData.instrument_key.is_(None),
                     set_={
                         "open": stmt.excluded.open,
                         "high": stmt.excluded.high,
