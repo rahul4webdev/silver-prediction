@@ -428,7 +428,16 @@ class PredictionEngine:
             Price at target_time or None if not found
         """
         now = datetime.utcnow()
-        time_since_target = (now - target_time).total_seconds() / 60  # minutes
+
+        # Handle timezone-aware vs naive datetime comparison
+        # target_time from DB may be timezone-aware, now is naive
+        if target_time.tzinfo is not None:
+            # Make target_time naive for comparison (assume it's UTC)
+            target_time_naive = target_time.replace(tzinfo=None)
+        else:
+            target_time_naive = target_time
+
+        time_since_target = (now - target_time_naive).total_seconds() / 60  # minutes
 
         # Tolerance based on interval - should be tight for 30m, looser for daily
         interval_tolerance = {
