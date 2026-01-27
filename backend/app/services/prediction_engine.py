@@ -453,16 +453,22 @@ class PredictionEngine:
             from app.models.tick_data import TickData
 
             time_tolerance = timedelta(minutes=base_tolerance)
+
+            # Build conditions - must match the specific contract if instrument_key provided
+            tick_conditions = [
+                TickData.asset == asset,
+                TickData.market == market,
+                TickData.timestamp >= target_time - time_tolerance,
+                TickData.timestamp <= target_time + time_tolerance,
+            ]
+
+            # IMPORTANT: Filter by specific contract (instrument_key is stored as symbol in tick_data)
+            if instrument_key:
+                tick_conditions.append(TickData.symbol == instrument_key)
+
             query = (
                 select(TickData)
-                .where(
-                    and_(
-                        TickData.asset == asset,
-                        TickData.market == market,
-                        TickData.timestamp >= target_time - time_tolerance,
-                        TickData.timestamp <= target_time + time_tolerance,
-                    )
-                )
+                .where(and_(*tick_conditions))
                 .order_by(func.abs(func.extract('epoch', TickData.timestamp - target_time)))
                 .limit(1)
             )
@@ -471,7 +477,7 @@ class PredictionEngine:
             tick_data = result.scalar_one_or_none()
 
             if tick_data and tick_data.ltp:
-                logger.info(f"Found price from tick data: {tick_data.ltp} at {tick_data.timestamp}")
+                logger.info(f"Found price from tick data for {instrument_key or 'any'}: {tick_data.ltp} at {tick_data.timestamp}")
                 return float(tick_data.ltp)
         except Exception as e:
             logger.debug(f"Could not query tick data: {e}")
