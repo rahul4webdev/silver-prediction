@@ -391,15 +391,26 @@ class DataSyncService:
 
             stmt = pg_insert(PriceData).values(batch)
 
-            # Use on_conflict_do_nothing for per-contract data
-            # Each (asset, market, interval, instrument_key, timestamp) should be unique
-            # If there's a conflict with the old constraint (without instrument_key),
-            # we just skip and continue - this handles the transition period
-            stmt = stmt.on_conflict_do_nothing()
+            # Use on_conflict_do_update with the new constraint that includes instrument_key
+            # This allows different contracts to have data for the same timestamp
+            # The constraint is: (asset, market, interval, COALESCE(instrument_key, 'none'), timestamp)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_price_data_asset_market_interval_contract_timestamp",
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "contract_type": stmt.excluded.contract_type,
+                    "trading_symbol": stmt.excluded.trading_symbol,
+                    "expiry": stmt.excluded.expiry,
+                    "source": stmt.excluded.source,
+                },
+            )
 
             result = await db.execute(stmt)
-            # Count actual inserts (some may be skipped due to conflicts)
-            inserted_count += result.rowcount if hasattr(result, 'rowcount') else len(batch)
+            inserted_count += len(batch)
 
         await db.commit()
         return inserted_count
@@ -637,8 +648,10 @@ class DataSyncService:
             stmt = pg_insert(PriceData).values(batch)
 
             # On conflict, update the price data (keeps the latest values)
+            # Uses the constraint that includes COALESCE(instrument_key, 'none')
+            # For COMEX data without instrument_key, it will use 'none'
             stmt = stmt.on_conflict_do_update(
-                index_elements=["asset", "market", "interval", "timestamp"],
+                constraint="uq_price_data_asset_market_interval_contract_timestamp",
                 set_={
                     "open": stmt.excluded.open,
                     "high": stmt.excluded.high,
