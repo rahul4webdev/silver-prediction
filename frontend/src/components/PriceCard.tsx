@@ -124,6 +124,18 @@ export default function PriceCard({ asset = 'silver', market }: PriceCardProps) 
     }
   }, [wsPrice, wsPrices, selectedContract, getPriceBySymbol, market]);
 
+  // Request all contract prices when connected and when contract changes
+  useEffect(() => {
+    if (market === 'mcx' && isConnected && selectedContract) {
+      // Request price for the selected contract if we don't have it yet
+      const existingPrice = getPriceBySymbol(selectedContract.instrument_key);
+      if (!existingPrice) {
+        // Request all contract prices from the WebSocket
+        send({ action: 'get_all_contracts', market: 'mcx' });
+      }
+    }
+  }, [market, isConnected, selectedContract, getPriceBySymbol, send]);
+
   // Fallback polling for COMEX (since we don't have real-time WebSocket for it)
   useEffect(() => {
     if (market !== 'comex') return;

@@ -203,15 +203,30 @@ async def websocket_prices(websocket: WebSocket, asset: str):
             "message": f"Connected to {asset} price stream",
         })
 
-        # Send latest cached price if available (check local cache first, then Redis)
-        latest = price_broadcaster.get_latest_price(asset, "mcx")
-        if not latest:
-            latest = await price_broadcaster.get_latest_price_from_redis(asset, "mcx")
-        if latest:
-            await websocket.send_json({
-                "type": "price_update",
-                **latest.to_dict()
-            })
+        # Send all cached prices for this asset (all contracts)
+        # First try local cache, then Redis
+        all_prices = price_broadcaster.get_all_prices_for_market(asset, "mcx")
+        if not all_prices:
+            all_prices = await price_broadcaster.get_all_prices_for_market_from_redis(asset, "mcx")
+
+        if all_prices:
+            # Send each contract's price as a separate message
+            for symbol, price_update in all_prices.items():
+                await websocket.send_json({
+                    "type": "price_update",
+                    **price_update.to_dict()
+                })
+            logger.info(f"Sent {len(all_prices)} contract prices to new WebSocket client")
+        else:
+            # Fallback: send single latest price (backward compat)
+            latest = price_broadcaster.get_latest_price(asset, "mcx")
+            if not latest:
+                latest = await price_broadcaster.get_latest_price_from_redis(asset, "mcx")
+            if latest:
+                await websocket.send_json({
+                    "type": "price_update",
+                    **latest.to_dict()
+                })
 
         while True:
             # Receive messages from client (for ping/pong or commands)
@@ -233,13 +248,33 @@ async def websocket_prices(websocket: WebSocket, asset: str):
                 elif action == "get_latest":
                     # Send latest cached price (check local cache first, then Redis)
                     market = message.get("market", "mcx")
-                    latest = price_broadcaster.get_latest_price(asset, market)
-                    if not latest:
-                        latest = await price_broadcaster.get_latest_price_from_redis(asset, market)
+                    symbol = message.get("symbol")  # Optional: specific contract
+
+                    if symbol:
+                        # Get price for specific contract
+                        latest = price_broadcaster.get_latest_price_by_symbol(symbol)
+                        if not latest:
+                            latest = await price_broadcaster.get_latest_price_by_symbol_from_redis(symbol)
+                    else:
+                        latest = price_broadcaster.get_latest_price(asset, market)
+                        if not latest:
+                            latest = await price_broadcaster.get_latest_price_from_redis(asset, market)
+
                     if latest:
                         await websocket.send_json({
                             "type": "price_update",
                             **latest.to_dict()
+                        })
+                elif action == "get_all_contracts":
+                    # Send all contract prices for this market
+                    market = message.get("market", "mcx")
+                    all_prices = price_broadcaster.get_all_prices_for_market(asset, market)
+                    if not all_prices:
+                        all_prices = await price_broadcaster.get_all_prices_for_market_from_redis(asset, market)
+                    for symbol, price_update in all_prices.items():
+                        await websocket.send_json({
+                            "type": "price_update",
+                            **price_update.to_dict()
                         })
 
             except asyncio.TimeoutError:

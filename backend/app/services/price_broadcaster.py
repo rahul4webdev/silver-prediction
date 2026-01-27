@@ -74,7 +74,8 @@ class PriceBroadcaster:
     """
 
     def __init__(self):
-        self._latest_prices: Dict[str, PriceUpdate] = {}  # key: "asset:market"
+        self._latest_prices: Dict[str, PriceUpdate] = {}  # key: "asset:market" (backward compat)
+        self._prices_by_symbol: Dict[str, PriceUpdate] = {}  # key: symbol (instrument_key)
         self._callbacks: Set[Callable] = set()
         self._lock = asyncio.Lock()
         self._redis = None
@@ -84,6 +85,10 @@ class PriceBroadcaster:
     def get_key(self, asset: str, market: str) -> str:
         """Generate cache key for asset/market pair."""
         return f"{asset}:{market}"
+
+    def get_symbol_key(self, symbol: str) -> str:
+        """Generate cache key for a specific symbol/instrument."""
+        return symbol
 
     async def _get_redis(self):
         """Get or create Redis connection."""
@@ -115,9 +120,14 @@ class PriceBroadcaster:
                 message = json.dumps(update.to_dict())
                 await redis.publish(PRICE_CHANNEL, message)
 
-                # Also store latest price in Redis for quick access
+                # Store latest price in Redis by asset:market (backward compat)
                 key = f"latest_price:{update.asset}:{update.market}"
                 await redis.set(key, message, ex=300)  # Expire in 5 minutes
+
+                # Also store by symbol (instrument_key) for per-contract access
+                if update.symbol:
+                    symbol_key = f"latest_price:symbol:{update.symbol}"
+                    await redis.set(symbol_key, message, ex=300)
             except Exception as e:
                 logger.error(f"Failed to publish price update: {e}")
 
@@ -179,6 +189,9 @@ class PriceBroadcaster:
 
         async with self._lock:
             self._latest_prices[key] = update
+            # Also store by symbol for per-contract access
+            if update.symbol:
+                self._prices_by_symbol[update.symbol] = update
 
         # Notify all callbacks (WebSocket handlers)
         message = {
@@ -205,6 +218,9 @@ class PriceBroadcaster:
         key = self.get_key(update.asset, update.market)
         async with self._lock:
             self._latest_prices[key] = update
+            # Also store by symbol for per-contract access
+            if update.symbol:
+                self._prices_by_symbol[update.symbol] = update
 
     async def _safe_callback(self, callback: Callable, message: Dict) -> None:
         """Safely execute a callback, catching any exceptions."""
@@ -231,6 +247,18 @@ class PriceBroadcaster:
         key = self.get_key(asset, market)
         return self._latest_prices.get(key)
 
+    def get_latest_price_by_symbol(self, symbol: str) -> Optional[PriceUpdate]:
+        """Get the latest cached price for a specific symbol/instrument."""
+        return self._prices_by_symbol.get(symbol)
+
+    def get_all_prices_for_market(self, asset: str, market: str) -> Dict[str, PriceUpdate]:
+        """Get all cached prices for an asset/market (all contracts)."""
+        return {
+            symbol: price
+            for symbol, price in self._prices_by_symbol.items()
+            if price.asset == asset and price.market == market
+        }
+
     async def get_latest_price_from_redis(self, asset: str, market: str) -> Optional[PriceUpdate]:
         """Get the latest price from Redis cache."""
         redis = await self._get_redis()
@@ -244,9 +272,49 @@ class PriceBroadcaster:
                 logger.error(f"Failed to get price from Redis: {e}")
         return None
 
+    async def get_latest_price_by_symbol_from_redis(self, symbol: str) -> Optional[PriceUpdate]:
+        """Get the latest price for a specific symbol from Redis cache."""
+        redis = await self._get_redis()
+        if redis:
+            try:
+                key = f"latest_price:symbol:{symbol}"
+                data = await redis.get(key)
+                if data:
+                    return PriceUpdate.from_dict(json.loads(data))
+            except Exception as e:
+                logger.error(f"Failed to get price from Redis for symbol {symbol}: {e}")
+        return None
+
+    async def get_all_prices_for_market_from_redis(self, asset: str, market: str) -> Dict[str, PriceUpdate]:
+        """Get all prices for an asset/market from Redis (all contracts)."""
+        redis = await self._get_redis()
+        prices = {}
+        if redis:
+            try:
+                # Scan for all symbol keys
+                cursor = 0
+                pattern = "latest_price:symbol:*"
+                while True:
+                    cursor, keys = await redis.scan(cursor, match=pattern, count=100)
+                    for key in keys:
+                        data = await redis.get(key)
+                        if data:
+                            price = PriceUpdate.from_dict(json.loads(data))
+                            if price.asset == asset and price.market == market:
+                                prices[price.symbol] = price
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                logger.error(f"Failed to get prices from Redis: {e}")
+        return prices
+
     def get_all_latest_prices(self) -> Dict[str, Dict[str, Any]]:
         """Get all latest cached prices."""
         return {k: v.to_dict() for k, v in self._latest_prices.items()}
+
+    def get_all_prices_by_symbol(self) -> Dict[str, Dict[str, Any]]:
+        """Get all cached prices keyed by symbol."""
+        return {k: v.to_dict() for k, v in self._prices_by_symbol.items()}
 
     @property
     def callback_count(self) -> int:
