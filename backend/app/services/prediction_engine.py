@@ -246,9 +246,9 @@ class PredictionEngine:
         # Get current price (latest from data)
         current_price = float(df["close"].iloc[-1])
 
-        # Use actual current time for prediction, not data timestamp
-        # This ensures target_time is always in the future
-        prediction_time = datetime.now()
+        # Use UTC time for prediction to match verification query
+        # This ensures target_time comparison works correctly
+        prediction_time = datetime.utcnow()
 
         # Get ensemble and predict
         ensemble = self.get_ensemble(interval)

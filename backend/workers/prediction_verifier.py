@@ -281,6 +281,7 @@ def generate_predictions(self, asset: str, market: str, interval: str):
     """
     Generate prediction for specified asset/market/interval.
     Only generates during market hours.
+    For MCX silver, generates predictions for 3 contracts (SILVER, SILVERM, SILVERMIC).
     """
     # Check if market is open
     if not is_market_open(market):
@@ -293,6 +294,58 @@ def generate_predictions(self, asset: str, market: str, interval: str):
 
     async def _generate():
         async with get_db_context() as db:
+            results = {}
+
+            # For MCX silver, generate predictions for multiple contracts
+            if market == "mcx" and asset == "silver":
+                try:
+                    from app.services.upstox_client import upstox_client
+
+                    # Get all silver contracts sorted by expiry (ascending)
+                    silver_contracts = await upstox_client.get_all_silver_instrument_keys()
+
+                    if silver_contracts:
+                        # Get unique contract types with nearest expiry (max 3)
+                        seen_types = set()
+                        contracts_to_use = []
+
+                        for contract in silver_contracts:
+                            contract_type = contract.get("contract_type")
+                            if contract_type and contract_type not in seen_types:
+                                seen_types.add(contract_type)
+                                contracts_to_use.append(contract)
+                                if len(contracts_to_use) >= 3:
+                                    break
+
+                        logger.info(
+                            f"Generating MCX predictions for {len(contracts_to_use)} contracts: "
+                            f"{[c.get('contract_type') for c in contracts_to_use]}"
+                        )
+
+                        # Generate prediction for each contract
+                        for contract in contracts_to_use:
+                            contract_type = contract.get("contract_type")
+                            try:
+                                prediction = await prediction_engine.generate_prediction(
+                                    db,
+                                    asset,
+                                    market,
+                                    interval,
+                                    instrument_key=contract.get("instrument_key"),
+                                    contract_type=contract_type,
+                                    trading_symbol=contract.get("trading_symbol"),
+                                    expiry=contract.get("expiry"),
+                                )
+                                results[contract_type] = prediction
+                            except Exception as e:
+                                logger.error(f"Prediction failed for {contract_type}: {e}")
+                                results[contract_type] = {"error": str(e)}
+
+                        return results
+                except Exception as e:
+                    logger.warning(f"Failed to get MCX contracts, using default: {e}")
+
+            # Default: single prediction (COMEX or fallback MCX)
             result = await prediction_engine.generate_prediction(
                 db, asset, market, interval
             )

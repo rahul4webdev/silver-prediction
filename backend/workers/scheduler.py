@@ -546,7 +546,11 @@ class SchedulerWorker:
         }
 
     async def _generate_predictions_for_interval(self, interval: str):
-        """Generate predictions for a specific interval for both markets."""
+        """
+        Generate predictions for a specific interval for both markets.
+        For MCX, generates predictions for 3 contracts (SILVER, SILVERM, SILVERMIC)
+        with nearest expiry in ascending order.
+        """
         # Skip if market is closed
         if not self._is_market_open():
             now_ist = datetime.now(IST)
@@ -562,23 +566,113 @@ class SchedulerWorker:
             async with await self.get_session() as db:
                 results = {}
 
-                for market in ["mcx", "comex"]:
-                    try:
+                # Generate COMEX prediction (single contract)
+                try:
+                    prediction = await prediction_engine.generate_prediction(
+                        db, "silver", "comex", interval
+                    )
+                    if prediction:
+                        results[f"comex_{interval}"] = {
+                            "status": "success",
+                            "prediction_id": prediction.get("id"),
+                            "direction": prediction.get("predicted_direction"),
+                            "target_time": prediction.get("target_time"),
+                        }
+                    else:
+                        results[f"comex_{interval}"] = {"status": "no_data"}
+                except Exception as e:
+                    logger.error(f"Prediction failed for comex/{interval}: {e}")
+                    results[f"comex_{interval}"] = {"status": "error", "error": str(e)}
+
+                # Generate MCX predictions for 3 contracts with nearest expiry
+                try:
+                    from app.services.upstox_client import upstox_client
+
+                    # Get all silver contracts sorted by expiry (ascending)
+                    silver_contracts = await upstox_client.get_all_silver_instrument_keys()
+
+                    if not silver_contracts:
+                        logger.warning("No MCX silver contracts found, using default prediction")
+                        # Fallback to default single prediction
                         prediction = await prediction_engine.generate_prediction(
-                            db, "silver", market, interval
+                            db, "silver", "mcx", interval
                         )
                         if prediction:
-                            results[f"{market}_{interval}"] = {
+                            results[f"mcx_{interval}"] = {
                                 "status": "success",
                                 "prediction_id": prediction.get("id"),
                                 "direction": prediction.get("predicted_direction"),
                                 "target_time": prediction.get("target_time"),
                             }
-                        else:
-                            results[f"{market}_{interval}"] = {"status": "no_data"}
-                    except Exception as e:
-                        logger.error(f"Prediction failed for {market}/{interval}: {e}")
-                        results[f"{market}_{interval}"] = {"status": "error", "error": str(e)}
+                    else:
+                        # Get unique contract types with nearest expiry (max 3)
+                        # We want one of each type: SILVER, SILVERM, SILVERMIC
+                        seen_types = set()
+                        contracts_to_use = []
+
+                        for contract in silver_contracts:
+                            contract_type = contract.get("contract_type")
+                            if contract_type and contract_type not in seen_types:
+                                seen_types.add(contract_type)
+                                contracts_to_use.append(contract)
+                                if len(contracts_to_use) >= 3:
+                                    break
+
+                        logger.info(
+                            f"Generating MCX predictions for {len(contracts_to_use)} contracts: "
+                            f"{[c.get('contract_type') for c in contracts_to_use]}"
+                        )
+
+                        # Generate prediction for each contract
+                        for contract in contracts_to_use:
+                            contract_type = contract.get("contract_type")
+                            try:
+                                prediction = await prediction_engine.generate_prediction(
+                                    db,
+                                    "silver",
+                                    "mcx",
+                                    interval,
+                                    instrument_key=contract.get("instrument_key"),
+                                    contract_type=contract_type,
+                                    trading_symbol=contract.get("trading_symbol"),
+                                    expiry=contract.get("expiry"),
+                                )
+                                if prediction:
+                                    results[f"mcx_{contract_type}_{interval}"] = {
+                                        "status": "success",
+                                        "prediction_id": prediction.get("id"),
+                                        "direction": prediction.get("predicted_direction"),
+                                        "target_time": prediction.get("target_time"),
+                                        "contract_type": contract_type,
+                                        "trading_symbol": contract.get("trading_symbol"),
+                                    }
+                                    logger.info(
+                                        f"MCX {contract_type} prediction: {prediction.get('predicted_direction')}"
+                                    )
+                            except Exception as e:
+                                logger.error(f"Prediction failed for mcx/{contract_type}/{interval}: {e}")
+                                results[f"mcx_{contract_type}_{interval}"] = {
+                                    "status": "error",
+                                    "error": str(e),
+                                }
+
+                except Exception as e:
+                    logger.error(f"Failed to get MCX contracts: {e}")
+                    # Fallback to default single prediction
+                    try:
+                        prediction = await prediction_engine.generate_prediction(
+                            db, "silver", "mcx", interval
+                        )
+                        if prediction:
+                            results[f"mcx_{interval}"] = {
+                                "status": "success",
+                                "prediction_id": prediction.get("id"),
+                                "direction": prediction.get("predicted_direction"),
+                                "target_time": prediction.get("target_time"),
+                            }
+                    except Exception as e2:
+                        logger.error(f"Fallback MCX prediction also failed: {e2}")
+                        results[f"mcx_{interval}"] = {"status": "error", "error": str(e2)}
 
                 logger.info(f"{interval} prediction generation complete: {results}")
                 return results
