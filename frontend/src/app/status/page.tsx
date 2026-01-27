@@ -76,6 +76,10 @@ export default function StatusPage() {
     const memoryUsed = service.memory_used as string | undefined;
     const userName = service.user_name as string | undefined;
     const tickCount = service.tick_count as number | undefined;
+    const todayTicks = service.today_ticks as number | undefined;
+    const lastTick = service.last_tick as string | undefined;
+    const dataFresh = service.data_fresh as boolean | undefined;
+    const serviceStatus = service.service_status as string | undefined;
     const reason = service.reason as string | undefined;
     const reauthUrl = service.reauth_url as string | undefined;
 
@@ -114,6 +118,17 @@ export default function StatusPage() {
         {typeof tickCount === 'number' ? (
           <p className="text-xs text-zinc-500 mt-1">Ticks: {tickCount.toLocaleString()}</p>
         ) : null}
+        {typeof todayTicks === 'number' ? (
+          <p className="text-xs text-cyan-400 mt-1 font-medium">Today: {todayTicks.toLocaleString()} ticks</p>
+        ) : null}
+        {lastTick ? (
+          <p className="text-xs text-zinc-500 mt-1">Last: {new Date(lastTick).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
+        ) : null}
+        {dataFresh !== undefined && (
+          <p className={cn('text-xs mt-1', dataFresh ? 'text-green-400' : 'text-yellow-400')}>
+            {dataFresh ? '● Live data' : '○ Stale data'}
+          </p>
+        )}
       </div>
     );
   };
