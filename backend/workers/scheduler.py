@@ -141,22 +141,28 @@ class SchedulerWorker:
         )
 
         # Schedule hourly model training at :15 past each hour (during trading hours)
-        # This runs 9:15, 10:15, 11:15, ... 23:15 IST = 3:45, 4:45, ... 17:45 UTC
+        # Training runs in background - only trains 30m and 1h models to reduce time
+        # Daily training handles 4h and 1d models
         self.scheduler.add_job(
             self.train_models_hourly,
             CronTrigger(minute=15),
             id="train_models_hourly",
             name="Train ML models (hourly)",
             replace_existing=True,
+            coalesce=True,  # Combine multiple missed runs into one
+            misfire_grace_time=600,  # 10 minute grace period
         )
 
         # Schedule 30-minute predictions every 30 minutes (at :00 and :30)
+        # High priority - should never be blocked
         self.scheduler.add_job(
             self.generate_30m_predictions,
             CronTrigger(minute="0,30"),
             id="generate_30m_predictions",
             name="Generate 30-minute predictions",
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=300,  # 5 minute grace period
         )
 
         # Schedule 1-hour predictions every hour (at :00)
@@ -166,6 +172,8 @@ class SchedulerWorker:
             id="generate_1h_predictions",
             name="Generate 1-hour predictions",
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=300,
         )
 
         # Schedule 4-hour predictions every 4 hours (at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
@@ -175,6 +183,8 @@ class SchedulerWorker:
             id="generate_4h_predictions",
             name="Generate 4-hour predictions",
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=600,
         )
 
         # Schedule daily predictions once per day at market open (3:30 UTC = 9:00 AM IST)
@@ -184,6 +194,8 @@ class SchedulerWorker:
             id="generate_daily_predictions",
             name="Generate daily predictions",
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=1800,  # 30 minute grace period
         )
 
         # Schedule prediction verification every 5 minutes
@@ -353,11 +365,16 @@ class SchedulerWorker:
                 tick_stats = await self._get_recent_tick_stats(db)
                 results["tick_data"] = tick_stats
 
-                # Train models for each market/interval combination
-                for market in ["mcx", "comex"]:
+                # Hourly training: Only train 30m and 1h models (faster)
+                # 4h and 1d models are trained during daily training at 6 AM
+                # Only train MCX models hourly (COMEX is less time-sensitive)
+                hourly_intervals = ["30m", "1h"]
+                hourly_markets = ["mcx"]  # Focus on MCX for hourly training
+
+                for market in hourly_markets:
                     results["markets"][market] = {}
 
-                    for interval in ["30m", "1h", "4h", "1d"]:
+                    for interval in hourly_intervals:
                         try:
                             # Train with enhanced data (historical + sentiment)
                             result = await self._train_with_enhanced_data(

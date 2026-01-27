@@ -230,28 +230,87 @@ async def trigger_aggregation(
 
 
 @router.get("/collector/status")
-async def get_collector_status() -> Dict[str, Any]:
+async def get_collector_status(
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
     """
     Get the current status of the tick collector.
 
-    Returns:
-        - Running state
-        - Connection info
-        - Error counts
+    Returns real-time stats from database including:
+        - Running state (based on recent tick activity)
+        - Today's tick count
+        - Last tick time
+        - Service status
     """
-    stats = tick_collector.stats
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, func
+    from app.models.tick_data import TickData
+    import subprocess
 
-    return {
-        "is_running": tick_collector.is_running,
-        "stats": {
-            "ticks_received": stats.get("ticks_received", 0),
-            "ticks_stored": stats.get("ticks_stored", 0),
-            "errors": stats.get("errors", 0),
-        },
-        "connection": {
-            "last_tick_time": stats.get("last_tick_time").isoformat()
-                if stats.get("last_tick_time") else None,
-            "connected_since": stats.get("connected_since").isoformat()
-                if stats.get("connected_since") else None,
-        },
-    }
+    try:
+        # Get today's tick count
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        count_result = await db.execute(
+            select(func.count()).where(TickData.timestamp >= today)
+        )
+        today_count = count_result.scalar() or 0
+
+        # Get the last tick time
+        last_tick_result = await db.execute(
+            select(TickData.timestamp)
+            .order_by(TickData.timestamp.desc())
+            .limit(1)
+        )
+        last_tick_row = last_tick_result.first()
+        last_tick_time = last_tick_row[0] if last_tick_row else None
+
+        # Determine if collector is running based on recent activity
+        # If we have a tick in the last 5 minutes, consider it running
+        is_running = False
+        if last_tick_time:
+            time_since_last = datetime.now() - last_tick_time.replace(tzinfo=None)
+            is_running = time_since_last < timedelta(minutes=5)
+
+        # Check service status using systemctl
+        service_status = "unknown"
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "silver-prediction-tick-collector"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            service_status = result.stdout.strip()
+        except Exception:
+            pass
+
+        return {
+            "is_running": is_running,
+            "service_status": service_status,
+            "stats": {
+                "today_ticks": today_count,
+                "ticks_received": today_count,
+                "ticks_stored": today_count,
+            },
+            "connection": {
+                "last_tick_time": last_tick_time.isoformat() if last_tick_time else None,
+                "data_fresh": is_running,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get collector status: {e}")
+        return {
+            "is_running": False,
+            "service_status": "error",
+            "stats": {
+                "today_ticks": 0,
+                "ticks_received": 0,
+                "ticks_stored": 0,
+            },
+            "connection": {
+                "last_tick_time": None,
+                "data_fresh": False,
+            },
+            "error": str(e),
+        }

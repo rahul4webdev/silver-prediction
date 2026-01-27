@@ -124,18 +124,51 @@ async def get_system_status(
 
     # ==================== Tick Collector Status ====================
     try:
-        from app.services.tick_collector import tick_collector
-        stats = tick_collector.stats
-        last_tick = stats.get("last_tick_time")
-        tick_count = stats.get("ticks_received", 0)
-        subscribed = stats.get("contracts_subscribed", 0)
+        # Get real tick data from database instead of in-memory stats
+        # (tick collector runs in separate process)
+        from app.models.tick_data import TickData
+        import subprocess
+
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_count_result = await db.execute(
+            select(func.count()).where(TickData.timestamp >= today)
+        )
+        today_tick_count = today_count_result.scalar() or 0
+
+        last_tick_result = await db.execute(
+            select(TickData.timestamp)
+            .order_by(TickData.timestamp.desc())
+            .limit(1)
+        )
+        last_tick_row = last_tick_result.first()
+        last_tick_time = last_tick_row[0] if last_tick_row else None
+
+        # Determine if collector is running based on recent activity
+        is_running = False
+        if last_tick_time:
+            time_since_last = datetime.now(timezone.utc) - last_tick_time
+            is_running = time_since_last < timedelta(minutes=5)
+
+        # Check systemd service status
+        service_status = "unknown"
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "silver-prediction-tick-collector"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            service_status = result.stdout.strip()
+        except Exception:
+            pass
 
         status["services"]["tick_collector"] = {
-            "status": "running" if tick_collector.is_running else "stopped",
-            "is_running": tick_collector.is_running,
-            "last_tick": last_tick.isoformat() if last_tick else None,
-            "tick_count": tick_count,
-            "subscribed_instruments": subscribed,
+            "status": "running" if is_running else "stopped",
+            "service_status": service_status,
+            "is_running": is_running,
+            "last_tick": last_tick_time.isoformat() if last_tick_time else None,
+            "today_ticks": today_tick_count,
+            "data_fresh": is_running,
         }
     except Exception as e:
         status["services"]["tick_collector"] = {
