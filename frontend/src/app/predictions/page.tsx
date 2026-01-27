@@ -94,6 +94,17 @@ export default function PredictionsPage() {
     });
   };
 
+  const formatShortTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Kolkata',
+    });
+  };
+
   const getIntervalLabel = (interval: string) => {
     const labels: Record<string, string> = {
       '30m': '30 Min',
@@ -298,18 +309,38 @@ export default function PredictionsPage() {
                         </span>
                       </td>
                       <td className="p-4 text-right">
-                        <span className="text-sm text-cyan-400 font-medium">
-                          {formatPrice(prediction.predicted_price, prediction.market)}
-                        </span>
+                        <div>
+                          <span className="text-sm text-cyan-400 font-medium">
+                            {formatPrice(prediction.predicted_price, prediction.market)}
+                          </span>
+                          {prediction.created_at && (
+                            <div className={cn(
+                              'text-[10px] mt-0.5',
+                              verification ? (verification.is_direction_correct ? 'text-green-400/70' : 'text-red-400/70') : 'text-zinc-500'
+                            )}>
+                              {formatShortTime(prediction.created_at)}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="p-4 text-right">
                         {verification && verification.actual_price != null ? (
-                          <span className={cn(
-                            'text-sm font-medium',
-                            verification.is_direction_correct ? 'text-green-400' : 'text-red-400'
-                          )}>
-                            {formatPrice(verification.actual_price, prediction.market)}
-                          </span>
+                          <div>
+                            <span className={cn(
+                              'text-sm font-medium',
+                              verification.is_direction_correct ? 'text-green-400' : 'text-red-400'
+                            )}>
+                              {formatPrice(verification.actual_price, prediction.market)}
+                            </span>
+                            {verification.verified_at && (
+                              <div className={cn(
+                                'text-[10px] mt-0.5',
+                                verification.is_direction_correct ? 'text-green-400/70' : 'text-red-400/70'
+                              )}>
+                                {formatShortTime(verification.verified_at)}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-sm text-zinc-500">-</span>
                         )}
