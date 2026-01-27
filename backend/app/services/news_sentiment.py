@@ -494,6 +494,254 @@ class NewsSentimentService:
             "news_avg_relevance": sentiment.average_relevance,
         }
 
+    async def save_articles_to_db(
+        self,
+        db,  # AsyncSession
+        articles: List[NewsArticle],
+        asset: str = "silver",
+    ) -> int:
+        """
+        Save news articles to the database.
+
+        Args:
+            db: Database session
+            articles: List of NewsArticle objects
+            asset: Asset the articles relate to
+
+        Returns:
+            Number of articles saved (new ones only)
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from app.models.sentiment import NewsArticle as NewsArticleModel
+
+        if not articles:
+            return 0
+
+        saved_count = 0
+
+        for article in articles:
+            try:
+                # Determine sentiment label
+                if article.sentiment_score and article.sentiment_score > 0.15:
+                    label = "bullish"
+                elif article.sentiment_score and article.sentiment_score < -0.15:
+                    label = "bearish"
+                else:
+                    label = "neutral"
+
+                record = {
+                    "url": article.url[:500],  # Truncate if needed
+                    "title": article.title[:500],
+                    "description": article.description[:2000] if article.description else None,
+                    "source": article.source[:100],
+                    "published_at": article.published_at,
+                    "fetched_at": datetime.now(),
+                    "asset": asset,
+                    "relevance_score": article.relevance_score or 0.0,
+                    "sentiment_score": article.sentiment_score or 0.0,
+                    "sentiment_label": label,
+                    "is_processed": True,
+                }
+
+                stmt = pg_insert(NewsArticleModel).values(record)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
+
+                result = await db.execute(stmt)
+                if result.rowcount > 0:
+                    saved_count += 1
+
+            except Exception as e:
+                logger.warning(f"Failed to save article {article.url}: {e}")
+
+        await db.commit()
+        return saved_count
+
+    async def save_sentiment_snapshot(
+        self,
+        db,  # AsyncSession
+        sentiment: SentimentResult,
+        asset: str = "silver",
+    ) -> bool:
+        """
+        Save a sentiment snapshot to the database.
+
+        Args:
+            db: Database session
+            sentiment: SentimentResult to save
+            asset: Asset the sentiment relates to
+
+        Returns:
+            True if saved successfully
+        """
+        from sqlalchemy import select, func
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from app.models.sentiment import SentimentSnapshot
+
+        try:
+            # Calculate 7-day rolling average from previous snapshots
+            seven_days_ago = datetime.now() - timedelta(days=7)
+            avg_query = await db.execute(
+                select(func.avg(SentimentSnapshot.overall_sentiment))
+                .where(
+                    SentimentSnapshot.asset == asset,
+                    SentimentSnapshot.timestamp >= seven_days_ago,
+                )
+            )
+            sentiment_7d_avg = avg_query.scalar()
+
+            # Calculate momentum (current - 7d average)
+            sentiment_momentum = None
+            if sentiment_7d_avg is not None:
+                sentiment_momentum = sentiment.overall_sentiment - sentiment_7d_avg
+
+            # Count sources
+            google_count = sum(
+                1 for a in sentiment.articles if "Google" in a.source
+            )
+            newsapi_count = sentiment.article_count - google_count
+
+            record = {
+                "asset": asset,
+                "timestamp": sentiment.timestamp,
+                "overall_sentiment": sentiment.overall_sentiment,
+                "sentiment_label": sentiment.sentiment_label,
+                "confidence": sentiment.confidence,
+                "article_count": sentiment.article_count,
+                "bullish_count": sentiment.bullish_count,
+                "bearish_count": sentiment.bearish_count,
+                "neutral_count": sentiment.neutral_count,
+                "avg_relevance": sentiment.average_relevance,
+                "sentiment_7d_avg": sentiment_7d_avg,
+                "sentiment_momentum": sentiment_momentum,
+                "google_news_count": google_count,
+                "newsapi_count": newsapi_count,
+                "lookback_days": 3,
+            }
+
+            stmt = pg_insert(SentimentSnapshot).values(record)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_sentiment_snapshot_asset_time",
+                set_={
+                    "overall_sentiment": stmt.excluded.overall_sentiment,
+                    "sentiment_label": stmt.excluded.sentiment_label,
+                    "confidence": stmt.excluded.confidence,
+                    "article_count": stmt.excluded.article_count,
+                    "bullish_count": stmt.excluded.bullish_count,
+                    "bearish_count": stmt.excluded.bearish_count,
+                    "neutral_count": stmt.excluded.neutral_count,
+                    "avg_relevance": stmt.excluded.avg_relevance,
+                    "sentiment_7d_avg": stmt.excluded.sentiment_7d_avg,
+                    "sentiment_momentum": stmt.excluded.sentiment_momentum,
+                },
+            )
+
+            await db.execute(stmt)
+            await db.commit()
+
+            logger.info(
+                f"Saved sentiment snapshot for {asset}: "
+                f"{sentiment.sentiment_label} ({sentiment.overall_sentiment:.3f}), "
+                f"{sentiment.article_count} articles"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save sentiment snapshot: {e}")
+            await db.rollback()
+            return False
+
+    async def fetch_and_save_sentiment(
+        self,
+        db,  # AsyncSession
+        asset: str = "silver",
+        lookback_days: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Fetch current sentiment and save to database.
+
+        This is the main method called by the scheduler.
+
+        Args:
+            db: Database session
+            asset: Asset to analyze
+            lookback_days: Days of news to analyze
+
+        Returns:
+            Dict with results
+        """
+        try:
+            # Fetch sentiment (uses cache if available)
+            sentiment = await self.get_sentiment(asset=asset, lookback_days=lookback_days)
+
+            # Save individual articles
+            articles_saved = await self.save_articles_to_db(db, sentiment.articles, asset)
+
+            # Save aggregated snapshot
+            snapshot_saved = await self.save_sentiment_snapshot(db, sentiment, asset)
+
+            return {
+                "status": "success",
+                "asset": asset,
+                "sentiment_label": sentiment.sentiment_label,
+                "overall_sentiment": sentiment.overall_sentiment,
+                "article_count": sentiment.article_count,
+                "articles_saved": articles_saved,
+                "snapshot_saved": snapshot_saved,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to fetch and save sentiment: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def get_historical_sentiment_features(
+        self,
+        db,  # AsyncSession
+        asset: str,
+        timestamp: datetime,
+        lookback_hours: int = 24,
+    ) -> Optional[Dict[str, float]]:
+        """
+        Get sentiment features from historical snapshots for a given timestamp.
+
+        Used to add sentiment features to historical training data.
+
+        Args:
+            db: Database session
+            asset: Asset to get sentiment for
+            timestamp: Point in time to get sentiment for
+            lookback_hours: How many hours back to look for a snapshot
+
+        Returns:
+            Dict of sentiment features or None if not available
+        """
+        from sqlalchemy import select
+        from app.models.sentiment import SentimentSnapshot
+
+        try:
+            cutoff = timestamp - timedelta(hours=lookback_hours)
+
+            result = await db.execute(
+                select(SentimentSnapshot)
+                .where(
+                    SentimentSnapshot.asset == asset,
+                    SentimentSnapshot.timestamp <= timestamp,
+                    SentimentSnapshot.timestamp >= cutoff,
+                )
+                .order_by(SentimentSnapshot.timestamp.desc())
+                .limit(1)
+            )
+
+            snapshot = result.scalar_one_or_none()
+
+            if snapshot:
+                return snapshot.to_features()
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to get historical sentiment: {e}")
+            return None
+
 
 # Create singleton with config
 def _create_service() -> NewsSentimentService:

@@ -97,7 +97,7 @@ class LSTMModel(BaseModel):
         dropout: float = 0.2,
         learning_rate: float = 0.001,
         batch_size: int = 32,
-        epochs: int = 50,
+        epochs: int = 20,  # Reduced from 50 to speed up training
         device: Optional[str] = None,
     ):
         super().__init__("lstm")

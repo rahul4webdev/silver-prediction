@@ -122,6 +122,15 @@ class SchedulerWorker:
             replace_existing=True,
         )
 
+        # Schedule sentiment sync every 30 minutes
+        self.scheduler.add_job(
+            self.sync_sentiment_data,
+            IntervalTrigger(minutes=30),
+            id="sync_sentiment",
+            name="Sync news sentiment",
+            replace_existing=True,
+        )
+
         # Schedule daily model training at 6 AM IST (00:30 UTC)
         self.scheduler.add_job(
             self.train_models,
@@ -203,6 +212,35 @@ class SchedulerWorker:
             self.scheduler.shutdown(wait=True)
             self._is_running = False
             logger.info("Scheduler stopped")
+
+    async def sync_sentiment_data(self):
+        """Sync news sentiment data and save to database."""
+        logger.info("Starting sentiment sync...")
+
+        try:
+            from app.services.news_sentiment import news_sentiment_service
+
+            async with await self.get_session() as db:
+                results = {}
+
+                # Sync sentiment for silver
+                result = await news_sentiment_service.fetch_and_save_sentiment(
+                    db, asset="silver", lookback_days=3
+                )
+                results["silver"] = result
+
+                # Sync sentiment for gold
+                result = await news_sentiment_service.fetch_and_save_sentiment(
+                    db, asset="gold", lookback_days=3
+                )
+                results["gold"] = result
+
+                logger.info(f"Sentiment sync complete: {results}")
+                return results
+
+        except Exception as e:
+            logger.error(f"Sentiment sync failed: {e}")
+            return {"status": "error", "error": str(e)}
 
     async def sync_all_data(self):
         """Sync data from all sources."""
@@ -461,10 +499,12 @@ class SchedulerWorker:
         This method:
         1. Gets historical OHLCV data
         2. Adds technical features
-        3. Adds sentiment features if available
-        4. Trains the ensemble models
+        3. Adds historical sentiment features from database
+        4. Falls back to current sentiment if no historical data
+        5. Trains the ensemble models
         """
         from app.ml.features.technical import add_technical_features
+        from app.services.news_sentiment import news_sentiment_service
 
         logger.debug(f"Training {asset}/{market}/{interval} with enhanced data...")
 
@@ -489,8 +529,36 @@ class SchedulerWorker:
         # Add technical features
         df = add_technical_features(df)
 
-        # Add sentiment features if available
-        if sentiment_data:
+        # Try to add historical sentiment features from database
+        historical_sentiment_added = False
+        if "timestamp" in df.columns:
+            try:
+                # Get sentiment features for each row based on its timestamp
+                sentiment_features = []
+                for _, row in df.iterrows():
+                    timestamp = pd.to_datetime(row["timestamp"])
+                    features = await news_sentiment_service.get_historical_sentiment_features(
+                        db, asset, timestamp, lookback_hours=24
+                    )
+                    sentiment_features.append(features)
+
+                # Check if we have enough historical sentiment data
+                valid_sentiment = [f for f in sentiment_features if f is not None]
+                if len(valid_sentiment) >= len(df) * 0.3:  # At least 30% coverage
+                    # Add sentiment features to dataframe
+                    for i, features in enumerate(sentiment_features):
+                        if features:
+                            for key, value in features.items():
+                                if key not in df.columns:
+                                    df[key] = 0.0
+                                df.iloc[i, df.columns.get_loc(key)] = value
+                    historical_sentiment_added = True
+                    logger.info(f"Added historical sentiment to {len(valid_sentiment)}/{len(df)} rows")
+            except Exception as e:
+                logger.warning(f"Failed to add historical sentiment: {e}")
+
+        # Fall back to current sentiment for all rows if no historical data
+        if not historical_sentiment_added and sentiment_data:
             df["sentiment_score"] = sentiment_data.get("overall", 0)
             df["sentiment_confidence"] = sentiment_data.get("confidence", 0.5)
             df["news_article_count"] = sentiment_data.get("article_count", 0)
@@ -540,7 +608,8 @@ class SchedulerWorker:
             "interval": interval,
             "training_samples": len(df),
             "features_used": list(df.columns),
-            "sentiment_included": sentiment_data is not None,
+            "sentiment_included": sentiment_data is not None or historical_sentiment_added,
+            "historical_sentiment": historical_sentiment_added,
             "tick_data_included": tick_stats.get("available", False),
             "results": results,
         }
@@ -703,8 +772,8 @@ class SchedulerWorker:
 
         try:
             async with await self.get_session() as db:
-                from workers.prediction_verifier import prediction_verifier
-                result = await prediction_verifier.verify_pending_predictions(db)
+                # Use prediction_engine directly instead of importing from prediction_verifier
+                result = await prediction_engine.verify_pending_predictions(db)
                 logger.info(f"Prediction verification complete: {result}")
                 return result
 

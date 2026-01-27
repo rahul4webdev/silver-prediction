@@ -91,11 +91,17 @@ class PriceData(Base):
     )
 
     # Unique constraints and indexes
-    # NOTE: The unique constraint is now created directly in PostgreSQL as:
-    # CREATE UNIQUE INDEX uq_price_data_asset_market_interval_contract_timestamp
-    # ON price_data (asset, market, interval, COALESCE(instrument_key, 'none'), timestamp);
+    # NOTE: Two unique constraints are used:
+    # 1. For MCX data (with instrument_key): uq_price_data_mcx - includes instrument_key
+    # 2. For COMEX data (without instrument_key): uq_price_data_comex - excludes instrument_key
     # This allows different MCX contracts to have data for the same timestamp.
     __table_args__ = (
+        # Unique constraint for COMEX data (no instrument_key)
+        # This is a partial unique index on rows where instrument_key IS NULL
+        UniqueConstraint(
+            "asset", "market", "interval", "timestamp",
+            name="uq_price_data_comex",
+        ),
         # Index for general queries (COMEX or when contract doesn't matter)
         Index(
             "idx_price_data_lookup",

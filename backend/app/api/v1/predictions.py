@@ -166,24 +166,6 @@ async def trigger_verification(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{prediction_id}")
-async def get_prediction(
-    prediction_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> Dict[str, Any]:
-    """
-    Get a specific prediction by ID.
-    """
-    query = select(Prediction).where(Prediction.id == prediction_id)
-    result = await db.execute(query)
-    prediction = result.scalar_one_or_none()
-
-    if not prediction:
-        raise HTTPException(status_code=404, detail="Prediction not found")
-
-    return prediction.to_dict()
-
-
 @router.post("/train")
 async def train_models(
     asset: str = Query("silver"),
@@ -377,3 +359,22 @@ async def clear_all_predictions(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete predictions: {str(e)}")
+
+
+# NOTE: This route MUST be last since it matches any path pattern
+@router.get("/{prediction_id}")
+async def get_prediction(
+    prediction_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Get a specific prediction by ID.
+    """
+    query = select(Prediction).where(Prediction.id == prediction_id)
+    result = await db.execute(query)
+    prediction = result.scalar_one_or_none()
+
+    if not prediction:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+
+    return prediction.to_dict()

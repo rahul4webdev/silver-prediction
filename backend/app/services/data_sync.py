@@ -645,23 +645,41 @@ class DataSyncService:
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
 
+            # For COMEX data (instrument_key is None), use the constraint without instrument_key
+            # For MCX data (instrument_key is set), use the constraint with instrument_key
+            has_instrument_key = batch[0].get("instrument_key") is not None
+
             stmt = pg_insert(PriceData).values(batch)
 
-            # On conflict, update the price data (keeps the latest values)
-            # Uses the unique index that includes instrument_key
-            # For COMEX data without instrument_key, the NULL is part of the key
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["asset", "market", "interval", "timestamp", "instrument_key"],
-                set_={
-                    "open": stmt.excluded.open,
-                    "high": stmt.excluded.high,
-                    "low": stmt.excluded.low,
-                    "close": stmt.excluded.close,
-                    "volume": stmt.excluded.volume,
-                    "created_at": stmt.excluded.created_at,
-                    "source": stmt.excluded.source,
-                }
-            )
+            if has_instrument_key:
+                # MCX data - use the constraint that includes instrument_key
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["asset", "market", "interval", "timestamp", "instrument_key"],
+                    set_={
+                        "open": stmt.excluded.open,
+                        "high": stmt.excluded.high,
+                        "low": stmt.excluded.low,
+                        "close": stmt.excluded.close,
+                        "volume": stmt.excluded.volume,
+                        "created_at": stmt.excluded.created_at,
+                        "source": stmt.excluded.source,
+                    }
+                )
+            else:
+                # COMEX data - use the basic constraint without instrument_key
+                # This uses the idx_price_data_lookup index (asset, market, interval, timestamp)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_price_data_comex",
+                    set_={
+                        "open": stmt.excluded.open,
+                        "high": stmt.excluded.high,
+                        "low": stmt.excluded.low,
+                        "close": stmt.excluded.close,
+                        "volume": stmt.excluded.volume,
+                        "created_at": stmt.excluded.created_at,
+                        "source": stmt.excluded.source,
+                    }
+                )
 
             await db.execute(stmt)
             inserted_count += len(batch)
