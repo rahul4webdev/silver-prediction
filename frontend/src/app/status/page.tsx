@@ -337,7 +337,7 @@ export default function StatusPage() {
                 <tr className="border-b border-white/5">
                   <th className="text-left text-xs text-zinc-500 font-medium py-2 px-3">Job Name</th>
                   <th className="text-left text-xs text-zinc-500 font-medium py-2 px-3">Job ID</th>
-                  <th className="text-right text-xs text-zinc-500 font-medium py-2 px-3">Next Run</th>
+                  <th className="text-right text-xs text-zinc-500 font-medium py-2 px-3">Schedule</th>
                 </tr>
               </thead>
               <tbody>
@@ -346,7 +346,7 @@ export default function StatusPage() {
                     <td className="py-2 px-3 text-sm text-white">{job.name}</td>
                     <td className="py-2 px-3 text-sm text-zinc-400 font-mono">{job.id}</td>
                     <td className="py-2 px-3 text-sm text-zinc-400 text-right">
-                      {job.next_run ? new Date(job.next_run).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A'}
+                      {job.schedule || (job.next_run ? new Date(job.next_run).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A')}
                     </td>
                   </tr>
                 ))}
