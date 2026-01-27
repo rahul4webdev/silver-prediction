@@ -83,12 +83,14 @@ export default function PredictionsPage() {
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
+    // Always display in IST timezone for consistency with MCX trading hours
     return date.toLocaleString('en-IN', {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'Asia/Kolkata',
     });
   };
 

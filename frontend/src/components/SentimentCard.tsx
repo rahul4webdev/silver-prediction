@@ -207,7 +207,7 @@ export default function SentimentCard({ asset = 'silver' }: SentimentCardProps) 
 
       {/* Last updated */}
       <div className="text-xs text-zinc-600 mt-3 text-right">
-        Updated: {new Date(sentiment.timestamp).toLocaleTimeString()}
+        Updated: {new Date(sentiment.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
       </div>
     </div>
   );

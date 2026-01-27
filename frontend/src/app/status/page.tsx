@@ -331,7 +331,7 @@ export default function StatusPage() {
                     <td className="py-2 px-3 text-sm text-white">{job.name}</td>
                     <td className="py-2 px-3 text-sm text-zinc-400 font-mono">{job.id}</td>
                     <td className="py-2 px-3 text-sm text-zinc-400 text-right">
-                      {job.next_run ? new Date(job.next_run).toLocaleString() : 'N/A'}
+                      {job.next_run ? new Date(job.next_run).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A'}
                     </td>
                   </tr>
                 ))}
@@ -347,7 +347,7 @@ export default function StatusPage() {
       <div className="glass-card p-4">
         <div className="flex items-center justify-between text-sm">
           <span className="text-zinc-500">Environment: <span className="text-white">{status.environment}</span></span>
-          <span className="text-zinc-500">Timestamp: <span className="text-white">{new Date(status.timestamp).toLocaleString()}</span></span>
+          <span className="text-zinc-500">Timestamp: <span className="text-white">{new Date(status.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span></span>
         </div>
       </div>
     </div>

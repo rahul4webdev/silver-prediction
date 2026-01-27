@@ -41,19 +41,23 @@ export function formatPercent(value: number | null | undefined): string {
 
 export function formatDateTime(dateString: string): string {
   const date = new Date(dateString);
+  // Always display in IST timezone for consistency with MCX trading hours
   return date.toLocaleString('en-IN', {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
   });
 }
 
 export function formatTime(dateString: string): string {
   const date = new Date(dateString);
+  // Always display in IST timezone for consistency with MCX trading hours
   return date.toLocaleTimeString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
   });
 }
 

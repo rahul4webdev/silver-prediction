@@ -476,7 +476,7 @@ export default function SentimentPage() {
       {/* Last Updated */}
       {sentiment && (
         <div className="text-center text-xs text-zinc-600">
-          Last updated: {new Date(sentiment.timestamp).toLocaleString()}
+          Last updated: {new Date(sentiment.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
         </div>
       )}
     </div>
