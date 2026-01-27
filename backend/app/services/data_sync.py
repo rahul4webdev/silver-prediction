@@ -666,10 +666,10 @@ class DataSyncService:
                     }
                 )
             else:
-                # COMEX data - use the basic constraint without instrument_key
-                # This uses the idx_price_data_lookup index (asset, market, interval, timestamp)
+                # COMEX data - use index_elements for the columns that form the unique key
+                # Note: For COMEX, instrument_key is NULL, so we only use the 4 basic columns
                 stmt = stmt.on_conflict_do_update(
-                    constraint="uq_price_data_comex",
+                    index_elements=["asset", "market", "interval", "timestamp"],
                     set_={
                         "open": stmt.excluded.open,
                         "high": stmt.excluded.high,
