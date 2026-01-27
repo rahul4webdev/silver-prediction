@@ -451,18 +451,15 @@ class NotificationWorker:
         except Exception as e:
             logger.error(f"Failed to collect news sentiment: {e}")
 
-    async def train_models_hourly(self):
+    async def train_models_daily(self):
         """
-        Retrain models every hour with latest data.
-        This ensures models stay updated with recent market conditions.
-        Runs only during trading hours.
+        Retrain all models daily at 1 AM IST.
+        Training at night when server load is low.
+        Uses tick data collected throughout the previous trading day.
         """
-        # Skip outside trading hours
-        if not self._is_trading_hours():
-            logger.info("Skipping hourly model training - market is closed")
-            return
+        now = self._get_ist_now()
+        logger.info(f"Starting daily model training at {now.strftime('%Y-%m-%d %H:%M')} IST...")
 
-        logger.info("Starting hourly model training...")
         try:
             from app.services.prediction_engine import prediction_engine
 
@@ -491,10 +488,24 @@ class NotificationWorker:
                         failed_count += 1
                         logger.error(f"Error training silver/{market}/{interval}: {e}")
 
-            logger.info(f"Hourly training complete: {trained_count} trained, {failed_count} failed")
+            logger.info(f"Daily training complete: {trained_count} trained, {failed_count} failed")
+
+            # Send notification about training completion
+            if trained_count > 0:
+                await telegram_notifier.send_alert(
+                    f"🧠 Daily Model Training Complete\n"
+                    f"✅ Trained: {trained_count} models\n"
+                    f"❌ Failed: {failed_count} models\n"
+                    f"⏰ Time: {now.strftime('%H:%M')} IST",
+                    level="info"
+                )
 
         except Exception as e:
-            logger.error(f"Failed hourly model training: {e}")
+            logger.error(f"Failed daily model training: {e}")
+            await telegram_notifier.send_alert(
+                f"❌ Daily Model Training Failed\n{str(e)[:200]}",
+                level="error"
+            )
 
     async def send_daily_performance_report(self):
         """
@@ -669,13 +680,16 @@ class NotificationWorker:
             replace_existing=True,
         )
 
-        # 10. Hourly model training at :15 every hour (trading hours only)
+        # 10. Daily model training at 1 AM IST (19:30 UTC previous day)
+        # Training at night when server load is low
         self.scheduler.add_job(
-            self.train_models_hourly,
-            CronTrigger(minute=15),  # Every hour at :15
-            id="model_training_hourly",
-            name="Hourly Model Training",
+            self.train_models_daily,
+            CronTrigger(hour=19, minute=30),  # 19:30 UTC = 1:00 AM IST
+            id="model_training_daily",
+            name="Daily Model Training (1 AM IST)",
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=1800,  # 30 minute grace period
         )
 
         # Send startup notification

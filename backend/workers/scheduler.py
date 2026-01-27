@@ -3,10 +3,9 @@ Scheduled tasks for data sync, model training, and prediction generation.
 Uses APScheduler for reliable scheduling.
 
 Training Strategy:
-- Hourly training during market hours (9 AM - 11:30 PM IST)
-- Uses: Historical data + Recent tick data + News sentiment
-- Training happens at :15 past each hour (9:15, 10:15, 11:15, etc.)
-- Last training at 11:15 PM covers data until close
+- Daily training at 1 AM IST (when server load is low)
+- Uses: Historical data + Tick data collected throughout the day + News sentiment
+- Training covers all intervals (30m, 1h, 4h, 1d) and both markets (MCX, COMEX)
 """
 
 import asyncio
@@ -48,7 +47,7 @@ class SchedulerWorker:
     """
     Scheduler for automated tasks:
     - Data sync (every 30 minutes during market hours)
-    - Model training (daily at 6 AM IST + hourly during market hours)
+    - Model training (daily at 1 AM IST - when server load is low)
     - Prediction generation (every 30 minutes)
     - Prediction verification (every 5 minutes)
     """
@@ -131,26 +130,17 @@ class SchedulerWorker:
             replace_existing=True,
         )
 
-        # Schedule daily model training at 6 AM IST (00:30 UTC)
+        # Schedule daily model training at 1 AM IST (19:30 UTC previous day)
+        # Training at night when server load is low
+        # Trains all intervals (30m, 1h, 4h, 1d) and both markets (MCX, COMEX)
         self.scheduler.add_job(
-            self.train_models,
-            CronTrigger(hour=0, minute=30),
-            id="train_models",
-            name="Train ML models (daily)",
-            replace_existing=True,
-        )
-
-        # Schedule hourly model training at :15 past each hour (during trading hours)
-        # Training runs in background - only trains 30m and 1h models to reduce time
-        # Daily training handles 4h and 1d models
-        self.scheduler.add_job(
-            self.train_models_hourly,
-            CronTrigger(minute=15),
-            id="train_models_hourly",
-            name="Train ML models (hourly)",
+            self.train_models_daily,
+            CronTrigger(hour=19, minute=30),  # 19:30 UTC = 1:00 AM IST
+            id="train_models_daily",
+            name="Train ML models (daily at 1 AM IST)",
             replace_existing=True,
             coalesce=True,  # Combine multiple missed runs into one
-            misfire_grace_time=600,  # 10 minute grace period
+            misfire_grace_time=1800,  # 30 minute grace period
         )
 
         # Schedule 30-minute predictions every 30 minutes (at :00 and :30)
@@ -291,69 +281,27 @@ class SchedulerWorker:
             logger.error(f"Data sync failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def train_models(self):
-        """Train or retrain ML models (daily full training)."""
-        logger.info("Starting scheduled daily model training...")
-
-        try:
-            async with await self.get_session() as db:
-                results = {}
-
-                for market in ["comex", "mcx"]:
-                    for interval in ["30m", "1h", "4h", "1d"]:
-                        try:
-                            result = await prediction_engine.train_models(
-                                db, "silver", market, interval
-                            )
-                            results[f"{market}_{interval}"] = result
-                        except Exception as e:
-                            logger.error(f"Training failed for {market}/{interval}: {e}")
-                            results[f"{market}_{interval}"] = {"status": "error", "error": str(e)}
-
-                logger.info(f"Daily model training complete: {results}")
-                return results
-
-        except Exception as e:
-            logger.error(f"Daily model training failed: {e}")
-            return {"status": "error", "error": str(e)}
-
-    async def train_models_hourly(self):
+    async def train_models_daily(self):
         """
-        Hourly model training during market hours.
+        Train all ML models daily at 1 AM IST.
 
-        This trains models with:
-        1. Historical data from database
-        2. Recent tick data from the last hour (if available)
-        3. Latest news sentiment data
-
-        Training schedule:
-        - 9:15 AM IST: First training with overnight data
-        - 10:15 AM IST: Training with 9:00-10:00 tick data
-        - 11:15 AM IST: Training with 10:00-11:00 tick data
-        - ... continues hourly ...
-        - 11:15 PM IST: Last training with 10:00-11:00 PM tick data
+        This comprehensive training:
+        1. Runs when server load is low (1 AM)
+        2. Uses all collected tick data from the previous trading day
+        3. Includes historical sentiment data
+        4. Trains all intervals (30m, 1h, 4h, 1d) for both markets (MCX, COMEX)
         """
-        # Skip if market is closed
-        if not self._is_market_open():
-            now_ist = datetime.now(IST)
-            logger.info(
-                f"Skipping hourly training - market closed "
-                f"(IST: {now_ist.strftime('%Y-%m-%d %H:%M')}, weekday: {now_ist.weekday()})"
-            )
-            return {"status": "skipped", "reason": "market_closed"}
-
         now_ist = datetime.now(IST)
-        logger.info(f"Starting hourly model training at {now_ist.strftime('%H:%M')} IST...")
+        logger.info(f"Starting daily model training at {now_ist.strftime('%Y-%m-%d %H:%M')} IST...")
 
         try:
             async with await self.get_session() as db:
                 results = {
-                    "timestamp": datetime.now(IST).isoformat(),
-                    "training_hour": now_ist.hour,
+                    "timestamp": now_ist.isoformat(),
                     "markets": {},
                 }
 
-                # Get sentiment data first (used for all training)
+                # Get sentiment data for training
                 sentiment_data = await self._get_sentiment_data()
                 results["sentiment"] = {
                     "available": sentiment_data is not None,
@@ -361,44 +309,37 @@ class SchedulerWorker:
                     "score": sentiment_data.get("overall") if sentiment_data else None,
                 }
 
-                # Get recent tick data from the last hour
-                tick_stats = await self._get_recent_tick_stats(db)
+                # Get tick stats from the previous trading day
+                tick_stats = await self._get_daily_tick_stats(db)
                 results["tick_data"] = tick_stats
 
-                # Hourly training: Only train 30m and 1h models (faster)
-                # 4h and 1d models are trained during daily training at 6 AM
-                # Only train MCX models hourly (COMEX is less time-sensitive)
-                hourly_intervals = ["30m", "1h"]
-                hourly_markets = ["mcx"]  # Focus on MCX for hourly training
-
-                for market in hourly_markets:
+                # Train all combinations
+                for market in ["mcx", "comex"]:
                     results["markets"][market] = {}
 
-                    for interval in hourly_intervals:
+                    for interval in ["30m", "1h", "4h", "1d"]:
                         try:
-                            # Train with enhanced data (historical + sentiment)
                             result = await self._train_with_enhanced_data(
                                 db, "silver", market, interval, sentiment_data, tick_stats
                             )
                             results["markets"][market][interval] = result
                             logger.info(
-                                f"Hourly training {market}/{interval}: "
-                                f"{result.get('training_samples', 0)} samples, "
-                                f"sentiment: {sentiment_data.get('label') if sentiment_data else 'N/A'}"
+                                f"Daily training {market}/{interval}: "
+                                f"{result.get('training_samples', 0)} samples"
                             )
                         except ValueError as e:
                             # Insufficient data - not an error, just skip
                             logger.info(f"Skipped {market}/{interval}: {e}")
                             results["markets"][market][interval] = {"status": "skipped", "reason": str(e)}
                         except Exception as e:
-                            logger.error(f"Hourly training failed for {market}/{interval}: {e}")
+                            logger.error(f"Training failed for {market}/{interval}: {e}")
                             results["markets"][market][interval] = {"status": "error", "error": str(e)}
 
-                logger.info(f"Hourly model training complete at {now_ist.strftime('%H:%M')} IST")
+                logger.info(f"Daily model training complete at {datetime.now(IST).strftime('%H:%M')} IST")
                 return results
 
         except Exception as e:
-            logger.error(f"Hourly model training failed: {e}")
+            logger.error(f"Daily model training failed: {e}")
             return {"status": "error", "error": str(e)}
 
     async def _get_sentiment_data(self) -> Optional[Dict[str, Any]]:
@@ -499,6 +440,91 @@ class SchedulerWorker:
 
         except Exception as e:
             logger.warning(f"Failed to get tick stats: {e}")
+            return {"available": False, "error": str(e)}
+
+    async def _get_daily_tick_stats(self, db: AsyncSession) -> Dict[str, Any]:
+        """
+        Get statistics from tick data collected in the previous trading day.
+
+        Returns OHLCV-like stats from real-time tick data.
+        """
+        try:
+            from app.models.tick_data import TickData
+
+            # Get ticks from the previous trading day (yesterday 9 AM to 11:30 PM IST)
+            now_ist = datetime.now(IST)
+            yesterday = now_ist - timedelta(days=1)
+            day_start = yesterday.replace(hour=9, minute=0, second=0, microsecond=0)
+            day_end = yesterday.replace(hour=23, minute=30, second=0, microsecond=0)
+
+            result = await db.execute(
+                select(
+                    func.count(TickData.id).label("tick_count"),
+                    func.min(TickData.ltp).label("low"),
+                    func.max(TickData.ltp).label("high"),
+                    func.avg(TickData.ltp).label("avg"),
+                    func.sum(TickData.volume).label("total_volume"),
+                ).where(
+                    and_(
+                        TickData.asset == "silver",
+                        TickData.market == "mcx",
+                        TickData.timestamp >= day_start,
+                        TickData.timestamp <= day_end,
+                    )
+                )
+            )
+
+            row = result.first()
+
+            if row and row.tick_count > 0:
+                # Get first and last tick for open/close
+                first_tick = await db.execute(
+                    select(TickData.ltp)
+                    .where(
+                        and_(
+                            TickData.asset == "silver",
+                            TickData.market == "mcx",
+                            TickData.timestamp >= day_start,
+                            TickData.timestamp <= day_end,
+                        )
+                    )
+                    .order_by(TickData.timestamp.asc())
+                    .limit(1)
+                )
+                last_tick = await db.execute(
+                    select(TickData.ltp)
+                    .where(
+                        and_(
+                            TickData.asset == "silver",
+                            TickData.market == "mcx",
+                            TickData.timestamp >= day_start,
+                            TickData.timestamp <= day_end,
+                        )
+                    )
+                    .order_by(TickData.timestamp.desc())
+                    .limit(1)
+                )
+
+                first_price = first_tick.scalar()
+                last_price = last_tick.scalar()
+
+                return {
+                    "available": True,
+                    "tick_count": row.tick_count,
+                    "open": float(first_price) if first_price else None,
+                    "high": float(row.high) if row.high else None,
+                    "low": float(row.low) if row.low else None,
+                    "close": float(last_price) if last_price else None,
+                    "avg_price": float(row.avg) if row.avg else None,
+                    "total_volume": int(row.total_volume) if row.total_volume else 0,
+                    "period": "previous_trading_day",
+                    "date": yesterday.strftime("%Y-%m-%d"),
+                }
+
+            return {"available": False, "tick_count": 0, "reason": "no_ticks_in_previous_day"}
+
+        except Exception as e:
+            logger.warning(f"Failed to get daily tick stats: {e}")
             return {"available": False, "error": str(e)}
 
     async def _train_with_enhanced_data(
