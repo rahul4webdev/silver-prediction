@@ -717,6 +717,72 @@ async def sync_mcx_per_contract(
     }
 
 
+@router.post("/migrate-price-data")
+async def migrate_price_data_schema(
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Run database migration to add contract-specific columns to price_data table.
+
+    This adds: instrument_key, contract_type, trading_symbol, expiry columns.
+    Must be run before using sync-mcx-per-contract endpoint.
+    """
+    results = {}
+
+    try:
+        # Step 1: Add new columns if they don't exist
+        columns_to_add = [
+            ("instrument_key", "VARCHAR(50)"),
+            ("contract_type", "VARCHAR(20)"),
+            ("trading_symbol", "VARCHAR(100)"),
+            ("expiry", "TIMESTAMP WITH TIME ZONE"),
+        ]
+
+        for col_name, col_type in columns_to_add:
+            try:
+                await db.execute(text(f"""
+                    ALTER TABLE price_data
+                    ADD COLUMN IF NOT EXISTS {col_name} {col_type};
+                """))
+                results[f"column_{col_name}"] = "added"
+            except Exception as e:
+                results[f"column_{col_name}"] = f"exists or error: {str(e)[:100]}"
+
+        await db.commit()
+
+        # Step 2: Create indexes if they don't exist
+        indexes = [
+            ("idx_price_data_instrument_key", "instrument_key"),
+            ("idx_price_data_contract_type", "asset, market, contract_type"),
+        ]
+
+        for idx_name, idx_cols in indexes:
+            try:
+                await db.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {idx_name}
+                    ON price_data ({idx_cols});
+                """))
+                results[f"index_{idx_name}"] = "created"
+            except Exception as e:
+                results[f"index_{idx_name}"] = f"exists or error: {str(e)[:100]}"
+
+        await db.commit()
+
+        return {
+            "status": "success",
+            "message": "Migration completed",
+            "results": results,
+        }
+
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "results": results,
+        }
+
+
 @router.get("/factors")
 async def get_market_factors(
     period_days: int = Query(30, le=730),
