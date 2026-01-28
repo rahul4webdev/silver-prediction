@@ -222,6 +222,117 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
+    def returns(df: pd.DataFrame, periods: List[int] = [1, 5, 10, 20]) -> pd.DataFrame:
+        """
+        Calculate percentage returns over various periods.
+        Returns are a key feature for predicting future price movements.
+        """
+        for period in periods:
+            df[f"return_{period}"] = df["close"].pct_change(period) * 100
+        return df
+
+    @staticmethod
+    def volatility(df: pd.DataFrame, periods: List[int] = [5, 10, 20]) -> pd.DataFrame:
+        """
+        Calculate historical volatility (rolling standard deviation of returns).
+        """
+        returns = df["close"].pct_change()
+        for period in periods:
+            df[f"volatility_{period}"] = returns.rolling(window=period).std() * 100
+        return df
+
+    @staticmethod
+    def price_position(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
+        """
+        Calculate where price is relative to recent range (0-1).
+        Useful for mean reversion and breakout detection.
+        """
+        high_max = df["high"].rolling(window=period).max()
+        low_min = df["low"].rolling(window=period).min()
+        df["price_position"] = (df["close"] - low_min) / (high_max - low_min)
+        df["price_from_high"] = (high_max - df["close"]) / df["close"] * 100
+        df["price_from_low"] = (df["close"] - low_min) / df["close"] * 100
+        return df
+
+    @staticmethod
+    def adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """
+        Calculate Average Directional Index (ADX) - trend strength indicator.
+        ADX > 25 indicates strong trend, < 20 indicates weak/no trend.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+
+        # +DM and -DM
+        plus_dm = high.diff()
+        minus_dm = low.diff().abs()
+
+        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
+        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
+
+        # True Range
+        tr1 = high - low
+        tr2 = (high - close.shift(1)).abs()
+        tr3 = (low - close.shift(1)).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+        # Smoothed averages
+        atr = tr.rolling(window=period).mean()
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
+
+        # DX and ADX
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        df["adx"] = dx.rolling(window=period).mean()
+        df["plus_di"] = plus_di
+        df["minus_di"] = minus_di
+
+        return df
+
+    @staticmethod
+    def gap_detection(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Detect price gaps between sessions (overnight gaps).
+        Gaps often indicate strong momentum.
+        """
+        df["gap"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1) * 100
+        df["gap_up"] = (df["gap"] > 0.1).astype(int)
+        df["gap_down"] = (df["gap"] < -0.1).astype(int)
+        return df
+
+    @staticmethod
+    def range_features(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """
+        Calculate range-based features (ATR ratio, range expansion).
+        """
+        df["range"] = df["high"] - df["low"]
+        df["range_pct"] = df["range"] / df["close"] * 100
+        df["avg_range"] = df["range"].rolling(window=period).mean()
+        df["range_expansion"] = df["range"] / df["avg_range"]
+        return df
+
+    @staticmethod
+    def candle_patterns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate candlestick pattern features.
+        """
+        body = df["close"] - df["open"]
+        full_range = df["high"] - df["low"]
+
+        # Body size relative to range
+        df["body_size"] = body.abs() / full_range.replace(0, np.nan)
+
+        # Upper and lower wicks
+        df["upper_wick"] = (df["high"] - df[["open", "close"]].max(axis=1)) / full_range.replace(0, np.nan)
+        df["lower_wick"] = (df[["open", "close"]].min(axis=1) - df["low"]) / full_range.replace(0, np.nan)
+
+        # Bullish/bearish candle
+        df["bullish_candle"] = (body > 0).astype(int)
+
+        return df
+
+    @staticmethod
     def vwap(df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate Volume Weighted Average Price.
@@ -289,6 +400,7 @@ class TechnicalIndicators:
         # Volatility indicators
         df = cls.bollinger_bands(df)
         df = cls.atr(df)
+        df = cls.volatility(df)
 
         # Volume indicators
         if include_volume and "volume" in df.columns:
@@ -299,6 +411,20 @@ class TechnicalIndicators:
         # Price action
         df = cls.support_resistance(df)
         df = cls.higher_highs_lower_lows(df)
+
+        # Returns and price position
+        df = cls.returns(df)
+        df = cls.price_position(df)
+
+        # Trend strength
+        df = cls.adx(df)
+
+        # Range and gap features
+        df = cls.range_features(df)
+        df = cls.gap_detection(df)
+
+        # Candlestick patterns
+        df = cls.candle_patterns(df)
 
         return df
 
@@ -319,6 +445,7 @@ class TechnicalIndicators:
             # Volatility
             "bb_middle", "bb_upper", "bb_lower", "bb_width", "bb_percent",
             "atr_14",
+            "volatility_5", "volatility_10", "volatility_20",
 
             # Volume
             "obv", "volume_sma_20", "volume_ratio", "vwap",
@@ -327,6 +454,24 @@ class TechnicalIndicators:
             "resistance", "support",
             "resistance_distance", "support_distance",
             "higher_high", "lower_low",
+
+            # Returns
+            "return_1", "return_5", "return_10", "return_20",
+
+            # Price position
+            "price_position", "price_from_high", "price_from_low",
+
+            # Trend strength (ADX)
+            "adx", "plus_di", "minus_di",
+
+            # Range features
+            "range", "range_pct", "avg_range", "range_expansion",
+
+            # Gap detection
+            "gap", "gap_up", "gap_down",
+
+            # Candlestick patterns
+            "body_size", "upper_wick", "lower_wick", "bullish_candle",
         ]
 
 

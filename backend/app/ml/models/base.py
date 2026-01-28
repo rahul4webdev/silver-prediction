@@ -145,7 +145,7 @@ class BaseModel(ABC):
         self,
         current_price: float,
         predicted_price: float,
-        threshold_percent: float = 0.1,
+        threshold_percent: float = 0.05,
     ) -> Tuple[str, float]:
         """
         Determine price direction and confidence.
@@ -153,7 +153,7 @@ class BaseModel(ABC):
         Args:
             current_price: Current price
             predicted_price: Predicted price
-            threshold_percent: Minimum change to not be neutral
+            threshold_percent: Minimum change to not be neutral (default 0.05%)
 
         Returns:
             Tuple of (direction, probability)
@@ -165,9 +165,9 @@ class BaseModel(ABC):
 
         direction = "bullish" if change_percent > 0 else "bearish"
 
-        # Simple probability based on change magnitude
-        # This is a placeholder - real probability should come from model
-        probability = min(0.5 + abs(change_percent) / 10, 0.95)
+        # Probability based on change magnitude - scaled for better sensitivity
+        # For commodity prices, even small changes (0.1-0.5%) can be significant
+        probability = min(0.5 + abs(change_percent) / 5, 0.95)
 
         return direction, probability
 
