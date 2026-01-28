@@ -602,26 +602,37 @@ class SchedulerWorker:
 
         # Fall back to current sentiment for all rows if no historical data
         if not historical_sentiment_added and sentiment_data:
-            df["sentiment_score"] = sentiment_data.get("overall", 0)
-            df["sentiment_confidence"] = sentiment_data.get("confidence", 0.5)
-            df["news_article_count"] = sentiment_data.get("article_count", 0)
-            df["news_bullish_ratio"] = (
+            overall = sentiment_data.get("overall", 0)
+            confidence = sentiment_data.get("confidence", 0.5)
+            article_count = sentiment_data.get("article_count", 0)
+            bullish_ratio = (
                 sentiment_data.get("bullish_count", 0) /
-                max(sentiment_data.get("article_count", 1), 1)
+                max(article_count, 1)
             )
-            df["news_bearish_ratio"] = (
+            bearish_ratio = (
                 sentiment_data.get("bearish_count", 0) /
-                max(sentiment_data.get("article_count", 1), 1)
+                max(article_count, 1)
             )
 
             # Sentiment momentum (bullish = 1, bearish = -1, neutral = 0)
             label = sentiment_data.get("label", "neutral")
             if label == "bullish":
-                df["sentiment_direction"] = 1
+                sentiment_direction = 1
             elif label == "bearish":
-                df["sentiment_direction"] = -1
+                sentiment_direction = -1
             else:
-                df["sentiment_direction"] = 0
+                sentiment_direction = 0
+
+            # Add all sentiment features (both old and new names for compatibility)
+            df["sentiment_score"] = overall
+            df["sentiment_confidence"] = confidence
+            df["sentiment_direction"] = sentiment_direction
+            df["news_sentiment"] = overall  # Alias for sentiment_score
+            df["news_confidence"] = confidence  # Alias for sentiment_confidence
+            df["news_article_count"] = article_count
+            df["news_bullish_ratio"] = bullish_ratio
+            df["news_bearish_ratio"] = bearish_ratio
+            df["news_avg_relevance"] = 0.5  # Default relevance when using fallback
 
         # Add recent tick volatility if available (for MCX)
         if tick_stats.get("available") and market == "mcx":

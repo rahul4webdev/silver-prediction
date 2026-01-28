@@ -604,13 +604,30 @@ class NewsSentimentService:
         Returns:
             Dict of feature values
         """
+        # Calculate ratios
+        bullish_ratio = sentiment.bullish_count / max(sentiment.article_count, 1)
+        bearish_ratio = sentiment.bearish_count / max(sentiment.article_count, 1)
+
+        # Determine sentiment direction: bullish=1, bearish=-1, neutral=0
+        if sentiment.sentiment_label == "bullish":
+            sentiment_direction = 1
+        elif sentiment.sentiment_label == "bearish":
+            sentiment_direction = -1
+        else:
+            sentiment_direction = 0
+
         return {
+            # New feature names (used in prediction)
             "news_sentiment": sentiment.overall_sentiment,
             "news_confidence": sentiment.confidence,
-            "news_bullish_ratio": sentiment.bullish_count / max(sentiment.article_count, 1),
-            "news_bearish_ratio": sentiment.bearish_count / max(sentiment.article_count, 1),
+            "news_bullish_ratio": bullish_ratio,
+            "news_bearish_ratio": bearish_ratio,
             "news_article_count": min(sentiment.article_count / 20, 1.0),  # Normalized
             "news_avg_relevance": sentiment.average_relevance,
+            # Legacy feature names (used in training) - for compatibility
+            "sentiment_score": sentiment.overall_sentiment,
+            "sentiment_confidence": sentiment.confidence,
+            "sentiment_direction": sentiment_direction,
         }
 
     async def save_articles_to_db(
